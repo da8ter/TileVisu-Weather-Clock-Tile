@@ -1,0 +1,14 @@
+{
+    "id": "{5E67CCCB-4AE2-5283-8D4B-80B4312FE8DD}",
+    "name": "TileVisuWetterUhr",
+    "type": 3,
+    "vendor": "",
+    "aliases": [
+        ""
+    ],
+    "parentRequirements": [],
+    "childRequirements": [],
+    "implemented": [],
+    "prefix": "TVWCL",
+    "url": "https://github.com/da8ter/TileVisuWetterClock"
+}

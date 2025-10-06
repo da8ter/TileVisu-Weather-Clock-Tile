@@ -1,0 +1,12 @@
+{
+    "id": "{BADDF8FB-1465-E070-8DBC-EE4136BC701B}",
+    "name": "TileVisuWetterUhr",
+    "author": "Stephan Sprick",
+    "url": "https://github.com/da8ter/TileVisuWetterClock",
+    "compatibility": {
+        "version": "7.1"
+    },
+    "version": "1.0.1",
+    "build": 1,
+    "date": 20250610
+}
