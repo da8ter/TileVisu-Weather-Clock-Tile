@@ -1,0 +1,14 @@
+{
+    "id": "{F15DDF9A-8A4B-4C3C-82F7-33B6031E9F32}",
+    "name": "TileVisuWeatherClockTile",
+    "type": 3,
+    "vendor": "",
+    "aliases": [
+        "TileVisu-Wetter-Uhr-Kachel"
+    ],
+    "parentRequirements": [],
+    "childRequirements": [],
+    "implemented": [],
+    "prefix": "TVWC",
+    "url": "https://github.com/da8ter/TileVisu-Weather-Header-Tile.git"
+}

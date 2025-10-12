@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+    <script src="/icons.js" crossorigin="anonymous"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>BBC Weather Image</title>
+  <style id="flipclock-css"></style>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      color: #fff;
+    }
+    #wrap {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: #000;
+      background-size: cover;
+      background-position: center bottom;
+      background-repeat: no-repeat;
+      overflow: hidden;
+      isolation: isolate;
+      z-index: 1001;
+    }
+
+    #wrap::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 33.333%;
+      background: linear-gradient(to right, rgba(10, 25, 70, 0.7), rgba(10, 25, 70, 0));
+      background: linear-gradient(in oklch to right, rgb(10 25 70 / 0.7), rgb(10 25 70 / 0));
+      pointer-events: none;
+      z-index: 1;
+      -webkit-backdrop-filter: blur(5px);
+      backdrop-filter: blur(5px);
+    }
+
+    #temperature {
+      position: absolute;
+      top: 60%;
+      left: 1vw;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.1rem;
+      color: inherit;
+      font-size: 45px;
+      z-index: 2;
+    }
+
+    #temperature-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      min-width: 8.8rem;
+      min-height: 1.8rem;
+    }
+
+    #temperature-icon img {
+      max-width: 4.4rem;
+      max-height: 4.4rem;
+      display: block;
+    }
+
+    #temperature-icon i[class^="fa-"],
+    #temperature-icon i[class*=" fa-"] {
+      font-size: 1.2em;
+      line-height: 1;
+    }
+
+    #temperature-value { font-size: 45px; line-height: 1; }
+    #temperature-extra {
+      display: flex;
+      flex-direction: row;
+      align-items: baseline;
+      gap: 0.3rem;
+      margin-top: 0.2rem;
+      white-space: nowrap;
+    }
+    #temperature-day { font-size: 16px; opacity: 0.9; }
+    #temperature-minmax { font-size: 18px; opacity: 0.9; }
+    /* Bottom-left stack for temperature + forecast */
+    #left-stack {
+      position: absolute;
+      left: 1vw;
+      bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.6rem; /* spacing between temperature and forecast */
+      z-index: 2;
+      color: inherit;
+      transform-origin: bottom left;
+    }
+    /* Forecast strip */
+    #forecast {
+      display: flex;
+      gap: 0.0rem;
+      align-items: stretch;
+      color: inherit;
+      opacity: 0.7; /* 30% transparent */
+    }
+    /* Reset temperature positioning inside left-stack */
+    #left-stack #temperature {
+      position: static;
+      top: auto;
+      left: auto;
+      transform: none;
+      opacity: 1;
+      padding-left: 0.6rem; /* align with .forecast-item horizontal padding */
+    }
+    .forecast-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
+      min-width: 50px;
+      backdrop-filter: blur(0px);
+    }
+    .forecast-item .fi-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: clamp(1.2rem, 2.4vw, 1.6rem);
+      margin-bottom: 0.2rem;
+    }
+    .forecast-item .fi-icon img {
+      width: 1.5em;
+      height: 1.5em;
+      display: block;
+    }
+    .forecast-item .fi-label {
+      font-size: 14px;
+      margin-bottom: 0.15rem;
+      white-space: nowrap;
+    }
+    .forecast-item .fi-temps {
+      font-size: 17px;
+      white-space: nowrap;
+    }
+    #clock-wrapper {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      max-width: 90vw;
+      max-height: 50vh;
+      overflow: visible;
+      z-index: 2;
+    }
+    #clock {
+      display: inline-block;
+      transform-origin: center top;
+    }
+    #clock .flip-clock {
+      margin: 0;
+    }
+    #clock-wrapper .flip-clock {
+      float: none !important;
+      display: inline-flex;
+      justify-content: center;
+    }
+    #clock .flip-clock ul {
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 6px;
+    }
+    #clock .flip-clock-divider .flip-clock-label {
+      display: none;
+    }
+    #date {
+      font-size: 1.7rem;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-align: center;
+      color: inherit;
+      margin-top: 10px;
+      display: block;
+      width: 100%;
+    }
+    #error {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      padding: 8px 12px;
+      background: rgba(200,0,0,0.2);
+      color: #fff;
+      font-size: 14px;
+      display: none;
+    }
+    .show-error #error { display: block; }
+  </style>
+  <script>
+    // Global variables for clock functionality
+    let flipClock = null;
+    let clockSyncTimer = null;
+    let resizeClockFrame = null;
+    let leftStackScaleFrame = null;
+
+    function injectStyle(targetId, base64) {
+      const styleEl = document.getElementById(targetId);
+      if (!styleEl) {
+        return;
+      }
+      styleEl.textContent = atob(base64);
+    }
+
+    function injectScript(base64) {
+      const script = document.createElement('script');
+      script.type = 'text/javascript';
+      script.text = atob(base64);
+      document.head.appendChild(script);
+    }
+
+    // FlipClock Assets via WebHook (no CDN). We'll inject when first image URL arrives
+    let flipClockAssetsRequested = false;
+    function ensureFlipClockAssetsFromUrl(imageUrl, ts) {
+      try {
+        if (flipClockAssetsRequested) return;
+        const base = (typeof imageUrl === 'string' ? imageUrl : '').split('?')[0];
+        if (!base) return;
+        const v = (typeof ts === 'number' && isFinite(ts)) ? ts : Date.now();
+        const cssUrl = base + '?asset=flipclock.min.css&v=' + v;
+        const jsUrl  = base + '?asset=flipclock.min.js&v=' + v;
+        // CSS
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = cssUrl;
+        document.head.appendChild(link);
+        // JS
+        const s = document.createElement('script');
+        s.src = jsUrl;
+        s.async = true;
+        s.onload = () => { /* FlipClock available as window.FlipClock */ };
+        document.head.appendChild(s);
+        flipClockAssetsRequested = true;
+      } catch (e) { console.error(e); }
+    }
+
+    // Bilder werden ausschließlich per WebHook-URL geladen
+
+    function tryLoadSequential(urls, onSuccess, onFailure) {
+      let idx = 0;
+      const next = () => {
+        if (!Array.isArray(urls) || idx >= urls.length) {
+          if (typeof onFailure === 'function') onFailure();
+          return;
+        }
+        const u = urls[idx++];
+        const img = new Image();
+        img.onload = () => { if (typeof onSuccess === 'function') onSuccess(u); };
+        img.onerror = next;
+        img.src = u;
+      };
+      next();
+    }
+
+    function setImage(url, slug, tod, ts) {
+      const wrap = document.getElementById('wrap');
+      if (!wrap) return;
+      const setBg = (finalUrl) => {
+        wrap.style.backgroundImage = `url('${finalUrl}')`;
+        wrap.setAttribute('data-image-info', ((slug || '') + ' ' + (tod || '')).trim());
+        updateDate();
+        document.body.classList.remove('show-error');
+      };
+      // Cache-Busting
+      const withTs = (u, t) => {
+        const sep = u.includes('?') ? '&' : '?';
+        return u + sep + 'v=' + (t || Date.now());
+      };
+      if (url && typeof url === 'string' && url.trim() !== '') {
+        const u = withTs(url.trim(), ts);
+        // WebHook liefert JSON { dataUri: 'data:image/...;base64,...' }
+        fetch(u, { cache: 'no-store' })
+          .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+          .then((j) => {
+            const dataUri = j && typeof j.dataUri === 'string' ? j.dataUri : '';
+            if (dataUri.startsWith('data:')) {
+              setBg(dataUri);
+            } else {
+              showError('Kein Bild verfügbar');
+            }
+          })
+          .catch(() => showError('Kein Bild verfügbar'));
+        return;
+      }
+      // Ohne URL -> Fehler anzeigen
+      showError('Kein Bild verfügbar');
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('error');
+      el.textContent = msg || 'Unbekannter Fehler';
+      document.body.classList.add('show-error');
+      const wrap = document.getElementById('wrap');
+      if (wrap) {
+        wrap.style.backgroundImage = 'none';
+      }
+    }
+
+    // Clock variables are now declared at the top of the script
+
+    function initClock() {
+      // Wait until FlipClock.js (modern) is loaded by the loader
+      if (typeof window.FlipClock === 'undefined') {
+        setTimeout(initClock, 300);
+        return;
+      }
+      if (flipClock) {
+        if (clockSyncTimer) {
+          clearTimeout(clockSyncTimer);
+          clockSyncTimer = null;
+        }
+        return;
+      }
+
+      const el = document.getElementById('clock');
+      if (!el) {
+        return;
+      }
+
+      try {
+        // Instantiate new FlipClock with a 24h clock face and no seconds
+        // In v0.10.8, pass the face as a string key ("TwentyFourHourClock")
+        flipClock = new window.FlipClock(el, new Date(), {
+          face: 'TwentyFourHourClock',
+          showSeconds: false
+        });
+        // Drive clock ourselves to avoid relying on internal timer
+        updateDate();
+        scheduleResizeClock();
+        const syncClock = () => {
+          const now = updateClockTime();
+          const msToNextSecond = 1000 - now.getMilliseconds();
+          clockSyncTimer = setTimeout(syncClock, msToNextSecond);
+        };
+        clockSyncTimer = setTimeout(syncClock, 1000 - (new Date()).getMilliseconds());
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function updateClockTime() {
+      if (!flipClock) return new Date();
+      const now = new Date();
+      try { flipClock.value = now; } catch (_) {}
+      return now;
+    }
+
+    function currentSecondsOfDay(now = new Date()) {
+      // Use local time components
+      return now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+    }
+
+    function scheduleResizeClock() {
+      if (resizeClockFrame) {
+        cancelAnimationFrame(resizeClockFrame);
+      }
+      resizeClockFrame = requestAnimationFrame(() => {
+        resizeClockFrame = null;
+        resizeClock();
+      });
+    }
+
+    function scheduleLeftStackScale() {
+      if (leftStackScaleFrame) {
+        cancelAnimationFrame(leftStackScaleFrame);
+      }
+      leftStackScaleFrame = requestAnimationFrame(() => {
+        leftStackScaleFrame = null;
+        scaleLeftStack();
+      });
+    }
+
+    function scaleLeftStack() {
+      const stack = document.getElementById('left-stack');
+      if (!stack) {
+        return;
+      }
+
+      stack.style.transform = '';
+      stack.style.maxWidth = '';
+
+      const maxWidth = window.innerWidth * 0.25;
+      if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
+        return;
+      }
+
+      const rect = stack.getBoundingClientRect();
+      if (!rect.width) {
+        return;
+      }
+
+      const scale = Math.min(1, maxWidth / rect.width);
+      if (scale < 1) {
+        stack.style.transform = `scale(${scale})`;
+      }
+
+      stack.style.maxWidth = `${maxWidth}px`;
+    }
+
+    function resizeClock() {
+      const container = document.getElementById('clock-wrapper');
+      const clockContainer = document.getElementById('clock');
+      let clockEl = null;
+      if (clockContainer) {
+        if (clockContainer.classList.contains('flip-clock')) {
+          clockEl = clockContainer;
+        } else {
+          clockEl = clockContainer.querySelector('.flip-clock');
+        }
+      }
+      if (!container || !clockContainer || !clockEl) {
+        if (!container || !clockContainer) {
+          return;
+        }
+        requestAnimationFrame(resizeClock);
+        return;
+      }
+      const dateEl = document.getElementById('date');
+      if (dateEl) {
+        if (dateEl.parentElement !== container) {
+          container.appendChild(dateEl);
+        } else if (container.lastElementChild !== dateEl) {
+          container.appendChild(dateEl);
+        }
+      }
+      console.log('resizeClock: start');
+      clockContainer.style.transform = 'scale(1)';
+      clockContainer.style.height = '';
+      clockContainer.style.width = '';
+
+      const rect = clockEl.getBoundingClientRect();
+      if (!rect.width || !rect.height) {
+        return;
+      }
+
+      const desiredWidth = window.innerWidth * 0.7;
+      const maxWidth = window.innerWidth * 0.9;
+      const availableWidth = Math.min(Math.max(desiredWidth, 300), maxWidth);
+      const availableHeight = window.innerHeight * 0.5;
+
+      const scale = Math.min(availableWidth / rect.width, availableHeight / rect.height);
+      if (!Number.isFinite(scale) || scale <= 0) {
+        return;
+      }
+
+      clockContainer.style.transform = `scale(${scale})`;
+      clockContainer.style.width = `${rect.width}px`;
+      clockContainer.style.height = `${rect.height * scale}px`;
+      const extraHeight = rect.height * (scale - 1);
+      clockContainer.style.marginBottom = extraHeight > 0 ? `${extraHeight}px` : '0';
+    }
+
+    function updateDate() {
+      console.log('Updating date...');
+      const dateEl = document.getElementById('date');
+      if (!dateEl) {
+        return;
+      }
+      try {
+        const formatter = new Intl.DateTimeFormat('de-DE', {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric'
+        });
+        const formattedDate = formatter.format(new Date());
+        dateEl.textContent = formattedDate;
+      } catch (e) {
+        // Fallback to simple date format
+        dateEl.textContent = new Date().toLocaleDateString('de-DE');
+      }
+    }
+
+    // Wird vom Modul via UpdateVisualizationValue(data) aufgerufen
+    function handleMessage(data) {
+      try {
+        if (!data) return;
+        // Falls data ein JSON-String ist, parse ihn
+        if (typeof data === 'string') {
+          try {
+            data = JSON.parse(data);
+          } catch (parseError) {
+            showError('Ungültiges JSON vom Modul: ' + data.substring(0, 100));
+            return;
+          }
+        }
+
+        switch (data.type) {
+          case 'image':
+            setImage(data.url || '', data.slug || '', data.timeOfDay || '', data.ts || 0);
+            // Ensure FlipClock assets are loaded via the same WebHook base (cache-busted)
+            ensureFlipClockAssetsFromUrl(data.url || '', data.ts || Date.now());
+            if (Array.isArray(data.forecast)) {
+              applyFirstDayToTemperature(data.forecast[0] || null);
+              renderForecast(data.forecast);
+            }
+            if (data.temperature) {
+              updateTemperature(data.temperature);
+            }
+            scheduleResizeClock();
+            scheduleLeftStackScale();
+            break;
+          case 'temperature':
+            updateTemperature(data.temperature || {});
+            scheduleLeftStackScale();
+            break;
+          case 'forecast':
+            applyFirstDayToTemperature((data.forecast || [])[0] || null);
+            renderForecast(data.forecast || []);
+            scheduleLeftStackScale();
+            break;
+        }
+      } catch (e) {
+        console.error(e);
+        showError('Fehler beim Verarbeiten der Nachricht');
+      }
+    }
+
+    function shortenDayName(label) {
+      try {
+        const map = {
+          'Montag': 'Mo', 'Dienstag': 'Di', 'Mittwoch': 'Mi', 'Donnerstag': 'Do', 'Freitag': 'Fr', 'Samstag': 'Sa', 'Sonntag': 'So'
+        };
+        return map[label] || (label ? label.slice(0, 2) : '');
+      } catch (_) { return label || ''; }
+    }
+
+    function renderForecast(forecast) {
+      const cont = document.getElementById('forecast');
+      if (!cont) return;
+      if (!Array.isArray(forecast)) forecast = [];
+      cont.innerHTML = '';
+      const start = 1; // skip first day (used with temperature)
+      const maxItems = Math.min(3, Math.max(0, forecast.length - start));
+      for (let k = 0; k < maxItems; k++) {
+        const i = start + k;
+        const d = forecast[i] || {};
+        const item = document.createElement('div');
+        item.className = 'forecast-item';
+
+        const iconWrap = document.createElement('div');
+        iconWrap.className = 'fi-icon';
+        const iconUrl = (typeof d.iconUrl === 'string' && d.iconUrl.trim()) ? d.iconUrl.trim() : '';
+        if (iconUrl) {
+          const img = document.createElement('img');
+          img.src = iconUrl;
+          img.alt = '';
+          iconWrap.appendChild(img);
+        } else {
+          const iTag = document.createElement('i');
+          const iconClasses = typeof d.icon === 'string' && d.icon.trim() ? d.icon.trim() : '';
+          if (iconClasses) {
+            iconClasses.split(/\s+/).forEach(cls => iTag.classList.add(cls));
+          }
+          iconWrap.appendChild(iTag);
+        }
+
+        const temps = document.createElement('div');
+        temps.className = 'fi-temps';
+        const maxVal = (typeof d.max === 'number') ? d.max : null;
+        const minVal = (typeof d.min === 'number') ? d.min : null;
+        const dayName = shortenDayName(d.label || '');
+        let tempStr = '';
+        if (maxVal !== null && minVal !== null) {
+          const lo = Math.min(minVal, maxVal);
+          const hi = Math.max(minVal, maxVal);
+          tempStr = `${lo}°-${hi}°`;
+        } else if (maxVal !== null) {
+          tempStr = `${maxVal}°`;
+        } else if (minVal !== null) {
+          tempStr = `${minVal}°`;
+        }
+        temps.textContent = dayName ? `${dayName} ${tempStr}` : tempStr;
+
+        item.appendChild(iconWrap);
+        item.appendChild(temps);
+        cont.appendChild(item);
+      }
+
+      scheduleLeftStackScale();
+    }
+
+    // bottom-aligned forecast via CSS; no dynamic positioning needed
+
+    function prepareIconForDisplay(iconName) {
+      if (!iconName || iconName === 'Transparent') {
+        return null;
+      }
+
+      const STYLE_ALIASES = {
+        fas: 'fa-solid',
+        far: 'fa-regular',
+        fal: 'fa-light',
+        fat: 'fa-thin',
+        fad: 'fa-duotone',
+        fab: 'fa-brands',
+        fak: 'fa-kit',
+        fa: 'fa-light'
+      };
+
+      const KNOWN_STYLES = new Set([
+        'fa-solid',
+        'fa-regular',
+        'fa-light',
+        'fa-thin',
+        'fa-duotone',
+        'fa-brands',
+        'fa-kit',
+        'fa-sharp'
+      ]);
+
+      const tokens = iconName.trim().split(/\s+/).filter(Boolean);
+      if (tokens.length === 0) {
+        return null;
+      }
+
+      const classes = new Set(['fa-fw']);
+      let slugClass = '';
+
+      for (const token of tokens) {
+        const lower = token.toLowerCase();
+
+        if (lower === 'fa-fw') {
+          classes.add('fa-fw');
+          continue;
+        }
+
+        if (STYLE_ALIASES[lower]) {
+          classes.add(STYLE_ALIASES[lower]);
+          continue;
+        }
+
+        if (KNOWN_STYLES.has(lower)) {
+          classes.add(lower);
+          continue;
+        }
+
+        if (lower.startsWith('fa-')) {
+          if (KNOWN_STYLES.has(lower)) {
+            classes.add(lower);
+          } else {
+            slugClass = lower;
+          }
+          continue;
+        }
+
+        slugClass = `fa-${lower}`;
+      }
+
+      if (!slugClass) {
+        const base = tokens[tokens.length - 1].toLowerCase();
+        slugClass = base.startsWith('fa-') ? base : `fa-${base}`;
+      }
+
+      // Force Font Awesome "light" style regardless of incoming style tokens
+      [...classes].forEach((c) => {
+        if (KNOWN_STYLES.has(c)) {
+          classes.delete(c);
+        }
+      });
+      classes.add('fa-light');
+
+      classes.add(slugClass);
+
+      return Array.from(classes).join(' ');
+    }
+
+    function updateTemperature(tempData = {}) {
+      const valueEl = document.getElementById('temperature-value');
+      if (!valueEl) {
+        return;
+      }
+
+      const valueText = typeof tempData.value === 'string' ? tempData.value : '';
+      valueEl.textContent = valueText;
+
+      const wrapper = document.getElementById('temperature');
+      if (wrapper) {
+        wrapper.classList.toggle('is-hidden', valueText === '');
+      }
+
+      scheduleLeftStackScale();
+    }
+
+    function applyFirstDayToTemperature(day) {
+      const iconEl = document.getElementById('temperature-icon');
+      const dayEl = document.getElementById('temperature-day');
+      const mmEl = document.getElementById('temperature-minmax');
+      if (!iconEl || !dayEl || !mmEl) return;
+
+      if (!day || typeof day !== 'object') {
+        dayEl.textContent = '';
+        mmEl.textContent = '';
+        return; // keep existing icon
+      }
+
+      const label = typeof day.label === 'string' ? day.label : '';
+      const maxVal = (typeof day.max === 'number') ? day.max : null;
+      const minVal = (typeof day.min === 'number') ? day.min : null;
+      const iconUrl = (typeof day.iconUrl === 'string' && day.iconUrl.trim()) ? day.iconUrl.trim() : '';
+      const iconClasses = (typeof day.icon === 'string' && day.icon.trim()) ? day.icon.trim() : '';
+
+      // set text
+      dayEl.textContent = label || '';
+      let mm = '';
+      if (maxVal !== null && minVal !== null) {
+        const lo = Math.min(minVal, maxVal);
+        const hi = Math.max(minVal, maxVal);
+        mm = `${lo}°-${hi}°`;
+      } else if (maxVal !== null) {
+        mm = `${maxVal}°`;
+      } else if (minVal !== null) {
+        mm = `${minVal}°`;
+      }
+      mmEl.textContent = mm;
+
+      // set icon from forecast
+      iconEl.classList.remove('has-icon', 'has-image');
+      iconEl.innerHTML = '';
+      if (iconUrl) {
+        const img = document.createElement('img');
+        img.src = iconUrl;
+        img.alt = '';
+        iconEl.appendChild(img);
+        iconEl.classList.add('has-image');
+      } else if (iconClasses) {
+        const iTag = document.createElement('i');
+        iconClasses.split(/\s+/).forEach(cls => iTag.classList.add(cls));
+        iconEl.appendChild(iTag);
+        iconEl.classList.add('has-icon');
+      }
+
+      scheduleLeftStackScale();
+    }
+
+    function requestInitial() {
+      try {
+        // Fordert den aktuellen Zustand vom Modul an
+        requestAction('GetState', 0);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    window.addEventListener('resize', scheduleLeftStackScale);
+
+    document.addEventListener('DOMContentLoaded', () => {
+      requestInitial();
+      initClock();
+      scheduleLeftStackScale();
+    });
+  </script>
+</head>
+<body>
+  <div id="wrap">
+    <div id="left-stack">
+      <div id="temperature">
+        <span id="temperature-icon"></span>
+        <span id="temperature-value"></span>
+        <div id="temperature-extra">
+          <div id="temperature-day"></div>
+          <div id="temperature-minmax"></div>
+        </div>
+      </div>
+      <div id="forecast" aria-label="3-Tage-Vorhersage"></div>
+    </div>
+    <img id="img" alt="" />
+    <div id="clock-wrapper">
+      <div id="clock"></div>
+      <div id="date"></div>
+
+    </div>
+  </div>
+  <div id="error"></div>
+
+</body>
+</html>
