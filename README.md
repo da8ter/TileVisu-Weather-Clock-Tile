@@ -1,21 +1,20 @@
 # TileVisu Wetter Uhr
 
-Die **TileVisu Wetter Uhr** erweitert IP-Symcon um eine HTML-Kachel, die aktuelle Wetterinformationen, eine dreitägige Vorhersage und eine FlipClock-Uhr kombiniert. Das Repository stellt das Modul `TileVisuWeatherHeaderTile` bereit.
+Die **TileVisu Wetter Uhr Kachel** erweitert IP-Symcon um eine HTML-Kachel, die aktuelle Wetterinformationen, eine dreitägige Vorhersage und eine FlipClock-Uhr kombiniert.
 
 ## Features
-- **Wetter-Header**: Die Kachel zeigt Temperatur, Tagesname und Min-/Max-Werte basierend auf dem ersten Eintrag der Prognose (`TileVisu-Weather-Header-Tile/module.html`).
-- **Dynamische Bildauswahl**: Wetterbilder werden über einen eigenen WebHook ausgeliefert, der anhand des Wunderground-Codes das passende Motiv bestimmt (`TileVisu-Weather-Header-Tile/module.php` → `sendImageUpdate()`).
-- **Automatische Skalierung**: Das Temperatur-/Vorhersage-Panel passt seine Größe automatisch an und bleibt dabei am unteren linken Rand verankert (`module.html`, Funktion `scaleLeftStack()`).
-- **FlipClock-Integration**: Uhrzeit und Datum erscheinen über FlipClock-Assets, die bei Bedarf direkt aus dem Modul geladen werden (`ensureFlipClockAssetsFromUrl()` in `module.html`).
+- **Wetter-Header**: Die Kachel zeigt Temperatur, Tagesname und Min-/Max-Werte basierend auf dem ersten Eintrag der Prognose.
+- **Dynamische BWetterbilder**: Je nach Wetter wird ein passendes Hintergrundbild angezeigt.
+- **FlipClock-Integration**: Uhrzeit und Datum erscheinen als FlipClock.
 
 ## Voraussetzungen
-- **IP-Symcon** mit HTML-SDK-Unterstützung.
-- **Wunderground/Weather.com Sync Modul** für Rohdaten der Vorhersage und Temperaturvariablen (siehe Hinweis in `TileVisu-Weather-Header-Tile/form.json`).
-- Eine Temperaturvariable (String/Float) und eine Vorhersagevariable (JSON), die vom Wunderground-Modul aktualisiert werden.
+- **IP-Symcon** 7.1.
+- **Wunderground/Weather.com Sync Modul** für Rohdaten der Vorhersage.
+- Eine Temperaturvariable (String/Float) zur Anzeige der aktuellen Außentemperatur.
 
 ## Installation
 - Modul aus dem Module-Store auswählen oder über die GitHub-URL `https://github.com/da8ter/TileVisu-Wetter-Uhr.git` hinzufügen.
-- Instanz `TileVisuWeatherHeaderTile` im Objektbaum anlegen.
+- Instanz `TileVisuWeatherClockTile` im Objektbaum anlegen.
 - Das Modul registriert automatisch den benötigten WebHook unter `/hook/wetterbilder/<InstanceID>`.
 
 ## Konfiguration
