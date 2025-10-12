@@ -7,7 +7,8 @@
       "Donations / gifts": "Donations / gifts",
       "Donate message": "Say thank you and support the developer of this module:",
       "WebHook Control not found. Skipping hook registration.": "WebHook Control not found. Skipping hook registration.",
-      "TileVisuWeatherClockTile": "TileVisu Weather Clock Tile"
+      "TileVisuWeatherClockTile": "TileVisu Weather Clock Tile",
+      "Say thank you and support the developer of this module:": "Say thank you and support the developer of this module:",
     },
     "de": {
       "Temperature variable": "Temperatur-Variable",
@@ -16,7 +17,8 @@
       "Donations / gifts": "Spenden / Schenkungen",
       "Donate message": "Sag Danke und unterstütze den Entwickler dieses Moduls:",
       "WebHook Control not found. Skipping hook registration.": "WebHook Control nicht gefunden. Hook-Registrierung wird übersprungen.",
-      "TileVisuWeatherClockTile": "TileVisu Wetter Uhr Kachel"
+      "TileVisuWeatherClockTile": "TileVisu Wetter Uhr Kachel",
+      "Say thank you and support the developer of this module:": "Sag Danke und unterstütze den Entwickler dieses Moduls:",
     }
   }
 }
