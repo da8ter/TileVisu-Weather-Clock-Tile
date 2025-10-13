@@ -562,6 +562,16 @@
       }
     }
 
+    // Bridge: IP-Symcon HTML-SDK ruft diese Funktion mit dem JSON-String auf
+    function UpdateVisualizationValue(data) {
+      try {
+        handleMessage(data);
+      } catch (e) {
+        console.error(e);
+        try { showError('Fehler beim Aktualisieren der Visualisierung'); } catch (_) {}
+      }
+    }
+
     function shortenDayName(label) {
       try {
         const map = {
@@ -610,7 +620,7 @@
         if (maxVal !== null && minVal !== null) {
           const lo = Math.min(minVal, maxVal);
           const hi = Math.max(minVal, maxVal);
-          tempStr = `${lo}°-${hi}°`;
+          tempStr = `${lo}° - ${hi}°`;
         } else if (maxVal !== null) {
           tempStr = `${maxVal}°`;
         } else if (minVal !== null) {

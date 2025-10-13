@@ -2,8 +2,8 @@
   "translations": {
     "en": {
       "Temperature variable": "Temperature variable",
-      "Wunderground forecast variable (JSON raw data forecast)": "Wunderground forecast variable (JSON raw data forecast)",
-      "Note: this module requires the Wunderground/Weather.com Sync module for weather data. Available in the Module Store.": "Note: this module requires the Wunderground/Weather.com Sync module for weather data. Available in the Module Store.",
+      "Location": "Location",
+      "Note: this module uses the Open-Meteo API. Select your location; the service URL is built automatically.": "Note: this module uses the Open-Meteo API. Select your location; the service URL is built automatically.",
       "Donations / gifts": "Donations / gifts",
       "Donate message": "Say thank you and support the developer of this module:",
       "WebHook Control not found. Skipping hook registration.": "WebHook Control not found. Skipping hook registration.",
@@ -12,8 +12,8 @@
     },
     "de": {
       "Temperature variable": "Temperatur-Variable",
-      "Wunderground forecast variable (JSON raw data forecast)": "Wunderground forecast variable (JSON raw data forecast)",
-      "Note: this module requires the Wunderground/Weather.com Sync module for weather data. Available in the Module Store.": "Hinweis: Dieses Modul benötigt für die Wetterdaten das Modul Wunderground/Weather.com Sync. Zu finden im Module-Store.",
+      "Location": "Standort",
+      "Note: this module uses the Open-Meteo API. Select your location; the service URL is built automatically.": "Hinweis: Dieses Modul nutzt die Open-Meteo API. Wähle deinen Standort; die Service-URL wird automatisch aufgebaut.",
       "Donations / gifts": "Spenden / Schenkungen",
       "Donate message": "Sag Danke und unterstütze den Entwickler dieses Moduls:",
       "WebHook Control not found. Skipping hook registration.": "WebHook Control nicht gefunden. Hook-Registrierung wird übersprungen.",

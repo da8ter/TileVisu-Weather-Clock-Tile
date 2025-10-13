@@ -12,18 +12,13 @@
       "width": "500px"
     },
     {
-      "type": "SelectVariable",
-      "name": "ForecastVariableID",
-      "caption": "Wunderground forecast variable (JSON raw data forecast)",
-      "filterVariableTypes": [
-        3
-      ],
-      "showValueButton": true,
-      "width": "500px"
+      "type": "SelectLocation",
+      "name": "Location",
+      "caption": "Location"
     },
     {
       "type": "Label",
-      "caption": "Note: this module requires the Wunderground/Weather.com Sync module for weather data. Available in the Module Store."
+      "caption": "Note: this module uses the Open-Meteo API. Select your location; the service URL is built automatically."
     },
     {
       "type": "Label",

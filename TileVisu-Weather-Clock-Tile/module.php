@@ -11,11 +11,10 @@ class TileVisuWeatherClockTile extends IPSModule
 
         // Config
         $this->RegisterPropertyInteger('TemperatureVariableID', 0);
-        $this->RegisterPropertyInteger('ForecastVariableID', 0);
+        $this->RegisterPropertyString('Location', '');
 
         // Runtime (Subscriptions)
         $this->RegisterAttributeInteger('LastTemperatureVarID', 0);
-        $this->RegisterAttributeInteger('LastForecastVarID', 0);
         $this->RegisterAttributeString('LastSlug', '');
         $this->RegisterAttributeString('LastTimeOfDay', '');
     }
@@ -64,21 +63,6 @@ class TileVisuWeatherClockTile extends IPSModule
             $this->WriteAttributeInteger('LastTemperatureVarID', 0);
         }
 
-        // Forecast variable subscription
-        $forecastVarId = (int)$this->ReadPropertyInteger('ForecastVariableID');
-        $prevForecast = (int)$this->ReadAttributeInteger('LastForecastVarID');
-        if ($prevForecast > 0 && $prevForecast !== $forecastVarId) {
-            @$this->UnregisterMessage($prevForecast, VM_UPDATE);
-            $this->UnregisterReference($prevForecast);
-        }
-        if ($forecastVarId > 0 && IPS_VariableExists($forecastVarId)) {
-            $this->RegisterMessage($forecastVarId, VM_UPDATE);
-            $this->RegisterReference($forecastVarId);
-            $this->WriteAttributeInteger('LastForecastVarID', $forecastVarId);
-        } else {
-            $this->WriteAttributeInteger('LastForecastVarID', 0);
-        }
-
         $this->sendImageUpdate();
         $this->sendTemperatureUpdate();
         $this->sendForecastUpdate();
@@ -95,7 +79,7 @@ class TileVisuWeatherClockTile extends IPSModule
     }
 
     /**
-     * Manuell/Timer: Zustände aktualisieren (WU basiert)
+     * Manuell/Timer: Zustände aktualisieren (Open-Meteo basiert)
      */
     public function UpdateNow(): void
     {
@@ -298,57 +282,34 @@ PHP;
         if (!method_exists($this, 'UpdateVisualizationValue')) {
             return;
         }
-        // Icon-Code aus der WU Forecast-Variable extrahieren
-        $code = null;
-        $forecastVarId = (int)$this->ReadPropertyInteger('ForecastVariableID');
-        if ($forecastVarId > 0 && IPS_VariableExists($forecastVarId)) {
-            $raw = @GetValue($forecastVarId);
-            if (!is_string($raw) || trim($raw) === '') {
-                $raw = @GetValueFormatted($forecastVarId);
+        // Open-Meteo: aktuellen Wettercode und Tag/Nacht bestimmen
+        $data = $this->fetchOpenMeteo();
+        $wmoCode = 0;
+        $isDay = null;
+        if (is_array($data) && isset($data['current']) && is_array($data['current'])) {
+            if (isset($data['current']['weather_code'])) {
+                $wmoCode = (int)$data['current']['weather_code'];
             }
-            $data = @json_decode((string)$raw, true);
-            if (is_array($data)) {
-                $dp = [];
-                if (isset($data['daypart']) && is_array($data['daypart']) && isset($data['daypart'][0]) && is_array($data['daypart'][0])) {
-                    $dp = $data['daypart'][0];
-                }
-                $dpIcon = isset($dp['iconCode']) && is_array($dp['iconCode']) ? $dp['iconCode'] : [];
-                $dpDN   = isset($dp['dayOrNight']) && is_array($dp['dayOrNight']) ? $dp['dayOrNight'] : [];
-                // Wähle den ersten DayPart passend zu aktuellem D/N
-                $hour = (int)date('G');
-                $dnLetter = ($hour >= 20 || $hour < 6) ? 'N' : 'D';
-                for ($j = 0; $j < count($dpIcon); $j++) {
-                    if (($dpDN[$j] ?? '') === $dnLetter && $dpIcon[$j] !== null) {
-                        $code = (int)$dpIcon[$j];
-                        break;
-                    }
-                }
-                // Wenn nichts gefunden, nimm das erste vorhandene
-                if ($code === null) {
-                    for ($j = 0; $j < count($dpIcon); $j++) {
-                        if ($dpIcon[$j] !== null) { $code = (int)$dpIcon[$j]; break; }
-                    }
-                }
+            if (isset($data['current']['is_day'])) {
+                $isDay = ((int)$data['current']['is_day'] === 1);
             }
         }
+        if ($isDay === null) {
+            $h = (int)date('G');
+            $isDay = ($h >= 6 && $h < 20);
+        }
 
-        // Day/Night bestimmen (lokale Zeit, falls nicht anders vorhanden)
-        $hour = (int)date('G');
-        $dnLetter = ($hour >= 20 || $hour < 6) ? 'N' : 'D';
-
-        $name = $this->mapIconToG5($code ?? 44, $dnLetter); // 44 -> N/A -> hazy
+        $name = $this->mapWMOToBackgroundName($wmoCode, $isDay);
         $slug = $name;
-        $tod  = ($dnLetter === 'N') ? 'night' : 'day';
+        $tod  = $isDay ? 'day' : 'night';
         if (preg_match('/-(day|night)$/i', $name, $m)) {
             $tod = strtolower($m[1]);
             $slug = substr($name, 0, - (strlen($m[1]) + 1));
         }
 
-        // Speichere letzten Zustand, damit WebHook ohne Parameter ausliefern kann
         $this->WriteAttributeString('LastSlug', $slug);
         $this->WriteAttributeString('LastTimeOfDay', $tod);
 
-        // WebHook-URL bereitstellen
         $baseName = $slug . '-' . $tod;
         $webhookUrl = '/hook/wetterbilder/' . $this->InstanceID . '?name=' . rawurlencode($baseName);
 
@@ -426,12 +387,6 @@ PHP;
             if ($temperatureVarId > 0 && $SenderID === $temperatureVarId) {
                 $this->sendTemperatureUpdate();
             }
-            $forecastVarId = (int)$this->ReadPropertyInteger('ForecastVariableID');
-            if ($forecastVarId > 0 && $SenderID === $forecastVarId) {
-                $this->sendForecastUpdate();
-                $this->sendImageUpdate();
-                $this->sendTemperatureUpdate();
-            }
         }
     }
 
@@ -461,14 +416,19 @@ PHP;
         ];
 
         $variableId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
-        if ($variableId <= 0 || !IPS_VariableExists($variableId)) {
-            return $result;
+        if ($variableId > 0 && IPS_VariableExists($variableId)) {
+            $formatted = @GetValueFormatted($variableId);
+            if (is_string($formatted)) {
+                $result['value'] = $formatted;
+                return $result;
+            }
         }
 
-        $formatted = @GetValueFormatted($variableId);
-
-        if (is_string($formatted)) {
-            $result['value'] = $formatted;
+        // Fallback auf Open-Meteo aktuelle Temperatur
+        $data = $this->fetchOpenMeteo();
+        if (is_array($data) && isset($data['current']) && isset($data['current']['temperature_2m'])) {
+            $t = (float)$data['current']['temperature_2m'];
+            $result['value'] = $this->formatTemperatureValue($t);
         }
 
         return $result;
@@ -477,62 +437,320 @@ PHP;
     private function getForecastPayload(): array
     {
         $out = [];
-        $variableId = (int)$this->ReadPropertyInteger('ForecastVariableID');
-        if ($variableId <= 0 || !IPS_VariableExists($variableId)) {
+        $data = $this->fetchOpenMeteo();
+        if (!is_array($data) || !isset($data['daily']) || !is_array($data['daily'])) {
+            $this->SendDebug('Forecast', 'No daily data in Open-Meteo response', 0);
             return $out;
         }
+        $daily = $data['daily'];
+        $times = isset($daily['time']) && is_array($daily['time']) ? $daily['time'] : [];
+        $codes = isset($daily['weather_code']) && is_array($daily['weather_code']) ? $daily['weather_code'] : [];
+        $tMax  = isset($daily['temperature_2m_max']) && is_array($daily['temperature_2m_max']) ? $daily['temperature_2m_max'] : [];
+        $tMin  = isset($daily['temperature_2m_min']) && is_array($daily['temperature_2m_min']) ? $daily['temperature_2m_min'] : [];
 
-        $raw = @GetValue($variableId);
-        if (!is_string($raw) || trim($raw) === '') {
-            $raw = @GetValueFormatted($variableId);
-            if (!is_string($raw)) {
-                return $out;
-            }
-        }
-
-        $data = @json_decode($raw, true);
-        if (!is_array($data)) {
-            return $out;
-        }
-
-        $days = isset($data['dayOfWeek']) && is_array($data['dayOfWeek']) ? $data['dayOfWeek'] : [];
-        $tMax = isset($data['temperatureMax']) && is_array($data['temperatureMax']) ? $data['temperatureMax'] : (isset($data['calendarDayTemperatureMax']) && is_array($data['calendarDayTemperatureMax']) ? $data['calendarDayTemperatureMax'] : []);
-        $tMin = isset($data['temperatureMin']) && is_array($data['temperatureMin']) ? $data['temperatureMin'] : (isset($data['calendarDayTemperatureMin']) && is_array($data['calendarDayTemperatureMin']) ? $data['calendarDayTemperatureMin'] : []);
-
-        $dp = [];
-        if (isset($data['daypart']) && is_array($data['daypart']) && isset($data['daypart'][0]) && is_array($data['daypart'][0])) {
-            $dp = $data['daypart'][0];
-        }
-        $dpIcon = isset($dp['iconCode']) && is_array($dp['iconCode']) ? $dp['iconCode'] : [];
-        $dpDN   = isset($dp['dayOrNight']) && is_array($dp['dayOrNight']) ? $dp['dayOrNight'] : [];
-
-        $count = min(4, count($days), count($tMax), count($tMin));
+        $count = min(4, count($times), count($codes), count($tMax), count($tMin));
         for ($i = 0; $i < $count; $i++) {
-            $label = is_string($days[$i] ?? '') ? (string)$days[$i] : '';
-            $max   = is_numeric($tMax[$i] ?? null) ? (int)$tMax[$i] : null;
-            $min   = is_numeric($tMin[$i] ?? null) ? (int)$tMin[$i] : null;
-
-            // Try daypart icon: sequence is typically D,N,D,N,... so use index i*2
-            $idx = $i * 2;
-            $code = null;
-            if (isset($dpIcon[$idx]) && $dpIcon[$idx] !== null && ($dpDN[$idx] ?? '') === 'D') {
-                $code = (int)$dpIcon[$idx];
-            }
-            $iconCode = (int)($code ?? 26); // default to cloudy
-            $iconUrl = $this->getWUIconDataURI($iconCode);
-            // Keep FA as a fallback, though frontend will prefer iconUrl
-            $icon = $this->mapWUIconCodeToFA($iconCode, true);
-
+            $date = (string)($times[$i] ?? '');
+            $label = $this->germanDayNameFromDate($date);
+            $max   = is_numeric($tMax[$i] ?? null) ? (int)round($tMax[$i]) : null;
+            $min   = is_numeric($tMin[$i] ?? null) ? (int)round($tMin[$i]) : null;
+            $code  = (int)($codes[$i] ?? 0);
+            // Use WU icon set (assume day icons for daily forecast)
+            $wuCode = $this->mapWMOToWUCode($code, true);
+            $iconUrl = $this->getWUIconDataURI($wuCode);
             $out[] = [
                 'label' => $label,
                 'max' => $max,
                 'min' => $min,
-                'icon' => $icon,
+                'icon' => '',
                 'iconUrl' => $iconUrl
             ];
         }
-
+        $this->SendDebug('Forecast', 'Built items: ' . count($out), 0);
         return $out;
+    }
+
+    private function mapWMOToWUCode(int $code, bool $isDay): int
+    {
+        switch ($code) {
+            case 0:  return $isDay ? 32 : 31; // sunny / clear night
+            case 1:  return $isDay ? 34 : 33; // fair
+            case 2:  return $isDay ? 30 : 29; // partly cloudy
+            case 3:  return 26;               // cloudy
+            case 45:
+            case 48: return 20;               // fog
+            case 51:
+            case 53:
+            case 55: return 9;                // drizzle
+            case 56:
+            case 57: return 8;                // freezing drizzle
+            case 61:
+            case 63: return 11;               // showers/light rain
+            case 65: return 12;               // heavy rain/showers
+            case 66:
+            case 67: return 10;               // freezing rain
+            case 71: return 14;               // light snow showers
+            case 73: return 16;               // snow
+            case 75: return 41;               // heavy snow
+            case 77: return 13;               // snow flurries
+            case 80:
+            case 81: return 11;               // rain showers
+            case 82: return 12;               // heavy/violent rain showers
+            case 85: return 14;               // snow showers slight
+            case 86: return 46;               // snow showers heavy
+            case 95: return 4;                // thunderstorm
+            case 96:
+            case 99: return 45;               // thundershowers (hail)
+            default: return 26;               // cloudy fallback
+        }
+    }
+
+    private function fetchOpenMeteo(): ?array
+    {
+        static $cache = null;
+        static $cacheUrl = '';
+        [$lat, $lon] = $this->resolveLocation();
+        $url = $this->buildOpenMeteoUrl($lat, $lon);
+        if ($cache !== null && $cacheUrl === $url) {
+            return $cache;
+        }
+        $this->SendDebug('OpenMeteo', 'Fetch URL: ' . $url, 0);
+        $content = '';
+        if (function_exists('Sys_GetURLContentEx')) {
+            // Timeout in ms; allow redirects
+            $content = @Sys_GetURLContentEx($url, [
+                'Timeout' => 15000,
+                'FollowLocation' => true,
+                'HttpHeader' => [
+                    'Accept: application/json',
+                    'User-Agent: TileVisuWeatherClockTile/1.0'
+                ]
+            ]);
+        }
+        if (!is_string($content) || $content === '') {
+            if (function_exists('Sys_GetURLContent')) {
+                $content = @Sys_GetURLContent($url);
+            }
+        }
+        if (!is_string($content) || $content === '') {
+            // Try cURL if available
+            if (function_exists('curl_init')) {
+                $ch = @curl_init($url);
+                if ($ch) {
+                    @curl_setopt_array($ch, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_FOLLOWLOCATION => true,
+                        CURLOPT_CONNECTTIMEOUT => 10,
+                        CURLOPT_TIMEOUT => 15,
+                        CURLOPT_HTTPHEADER => [
+                            'Accept: application/json',
+                            'User-Agent: TileVisuWeatherClockTile/1.0'
+                        ],
+                        CURLOPT_SSL_VERIFYPEER => true,
+                        CURLOPT_SSL_VERIFYHOST => 2,
+                        CURLOPT_IPRESOLVE => defined('CURL_IPRESOLVE_V4') ? CURL_IPRESOLVE_V4 : 1
+                    ]);
+                    $res = @curl_exec($ch);
+                    $http = (int)@curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    $err = @curl_error($ch);
+                    @curl_close($ch);
+                    if (is_string($res) && $res !== '' && ($http >= 200 && $http < 300)) {
+                        $content = $res;
+                    } else {
+                        $this->SendDebug('OpenMeteo', 'cURL error: HTTP ' . $http . ' ' . $err, 0);
+                    }
+                }
+            }
+        }
+        if (!is_string($content) || $content === '') {
+            // Fallback via streams with UA + Accept header
+            $headers = [
+                'Accept: application/json',
+                'User-Agent: TileVisuWeatherClockTile/1.0'
+            ];
+            $ctx = stream_context_create([
+                'http' => [
+                    'method' => 'GET',
+                    'timeout' => 15,
+                    'ignore_errors' => true,
+                    'header' => implode("\r\n", $headers)
+                ],
+                'ssl' => [
+                    'verify_peer' => true,
+                    'verify_peer_name' => true
+                ]
+            ]);
+            $content = @file_get_contents($url, false, $ctx);
+        }
+        if (!is_string($content) || $content === '') {
+            // Last resort: insecure (not recommended). Attempt only if everything else failed.
+            $this->SendDebug('OpenMeteo', 'Retry insecure SSL fallback', 0);
+            $ctx = stream_context_create([
+                'http' => [
+                    'method' => 'GET',
+                    'timeout' => 15,
+                    'ignore_errors' => true,
+                    'header' => "Accept: application/json\r\nUser-Agent: TileVisuWeatherClockTile/1.0"
+                ],
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false
+                ]
+            ]);
+            $content = @file_get_contents($url, false, $ctx);
+        }
+        if (!is_string($content) || $content === '') {
+            $this->SendDebug('OpenMeteo', 'Empty response or HTTP error', 0);
+            return null;
+        }
+        $this->SendDebug('OpenMeteo', 'Response length: ' . strlen($content), 0);
+        $data = @json_decode($content, true);
+        $cache = is_array($data) ? $data : null;
+        $cacheUrl = $url;
+        if (!is_array($data)) {
+            $this->SendDebug('OpenMeteo', 'JSON decode failed', 0);
+        }
+        return $cache;
+    }
+
+    private function resolveLocation(): array
+    {
+        // Default: North Pole
+        $default = [90.0, 0.0];
+        $raw = trim((string)$this->ReadPropertyString('Location'));
+        if ($raw === '') {
+            return $default;
+        }
+        $loc = @json_decode($raw, true);
+        if (!is_array($loc)) {
+            return $default;
+        }
+        $lat = $loc['latitude'] ?? $loc['lat'] ?? null;
+        $lon = $loc['longitude'] ?? $loc['lon'] ?? null;
+        if (is_numeric($lat) && is_numeric($lon)) {
+            return [ (float)$lat, (float)$lon ];
+        }
+        return $default;
+    }
+
+    private function buildOpenMeteoUrl(float $lat, float $lon): string
+    {
+        $params = [
+            'latitude' => (string)$lat,
+            'longitude' => (string)$lon,
+            'daily' => 'weather_code,temperature_2m_max,temperature_2m_min',
+            'hourly' => 'is_day,weather_code,temperature_2m',
+            'models' => 'icon_seamless',
+            'current' => 'temperature_2m,is_day,weather_code',
+            'timezone' => 'Europe/Berlin',
+            'forecast_days' => 5
+        ];
+        return 'https://api.open-meteo.com/v1/forecast?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    private function mapWMOToBackgroundName(int $code, bool $isDay): string
+    {
+        $dn = $isDay ? 'day' : 'night';
+        // WMO mapping to available wetterbilder slugs
+        if ($code === 0) return $isDay ? 'sunny-day' : 'clear-sky-night';
+        if (in_array($code, [1], true)) return $isDay ? 'white-cloud-day' : 'white-cloud-night';
+        if (in_array($code, [2], true)) return $isDay ? 'sunny-intervals-day' : 'partly-cloudy-night';
+        if (in_array($code, [3], true)) return 'thick-cloud-' . $dn;
+        if (in_array($code, [45,48], true)) return 'fog-' . $dn; // or mist-
+        if (in_array($code, [51,53,55], true)) return 'drizzle-' . $dn;
+        if (in_array($code, [56,57], true)) return 'sleet-' . $dn; // freezing drizzle
+        if ($code === 61) return 'light-rain-' . $dn;
+        if ($code === 63) return 'light-rain-' . $dn;
+        if ($code === 65) return 'heavy-rain-' . $dn;
+        if (in_array($code, [66,67], true)) return 'sleet-' . $dn; // freezing rain
+        if ($code === 71) return 'light-snow-shower-' . $dn;
+        if ($code === 73) return 'heavy-snow-' . $dn;
+        if ($code === 75) return 'heavy-snow-' . $dn;
+        if ($code === 77) return 'light-snow-shower-' . $dn; // snow grains
+        if ($code === 80) return 'light-rain-shower-' . $dn;
+        if ($code === 81) return 'light-rain-shower-' . $dn;
+        if ($code === 82) return 'heavy-rain-shower-' . $dn;
+        if ($code === 85) return 'light-snow-shower-' . $dn;
+        if ($code === 86) return 'heavy-snow-shower-' . $dn;
+        if ($code === 95) return 'thunderstorm-' . $dn;
+        if (in_array($code, [96,99], true)) return 'thunderstorm-shower-' . $dn;
+        return 'hazy-' . $dn;
+    }
+
+    private function mapWMOToFA(int $code, bool $isDay): string
+    {
+        // Minimal FA mapping for forecast icons
+        $base = 'cloud';
+        switch ($code) {
+            case 0:
+            case 1:
+                $base = $isDay ? 'sun' : 'moon';
+                break;
+            case 2:
+                $base = $isDay ? 'cloud-sun' : 'cloud-moon';
+                break;
+            case 3:
+                $base = 'clouds';
+                break;
+            case 45:
+            case 48:
+                $base = 'smog'; // fog
+                break;
+            case 51: case 53: case 55:
+                $base = 'cloud-drizzle';
+                break;
+            case 61: case 63:
+                $base = 'cloud-rain';
+                break;
+            case 65:
+                $base = 'cloud-showers-heavy';
+                break;
+            case 66: case 67:
+                $base = 'cloud-sleet';
+                break;
+            case 71: case 73: case 75: case 77:
+                $base = 'snowflake';
+                break;
+            case 80: case 81:
+                $base = 'cloud-sun-rain';
+                break;
+            case 82:
+                $base = 'cloud-showers-heavy';
+                break;
+            case 85: case 86:
+                $base = 'cloud-snow';
+                break;
+            case 95: case 96: case 99:
+                $base = 'cloud-bolt';
+                break;
+        }
+        return 'fa-light fa-' . $base;
+    }
+
+    private function germanDayNameFromDate(string $date): string
+    {
+        // $date format: YYYY-MM-DD
+        try {
+            $dt = new DateTime($date);
+        } catch (Exception $e) {
+            return '';
+        }
+        $en = $dt->format('l');
+        $map = [
+            'Monday' => 'Montag',
+            'Tuesday' => 'Dienstag',
+            'Wednesday' => 'Mittwoch',
+            'Thursday' => 'Donnerstag',
+            'Friday' => 'Freitag',
+            'Saturday' => 'Samstag',
+            'Sunday' => 'Sonntag'
+        ];
+        return $map[$en] ?? '';
+    }
+
+    private function formatTemperatureValue(float $t): string
+    {
+        return (string)round($t) . "°C";
     }
 
     private function getWUIconDataURI(int $code): string
@@ -557,9 +775,11 @@ PHP;
         if (!method_exists($this, 'UpdateVisualizationValue')) {
             return;
         }
+        $forecast = $this->getForecastPayload();
+        $this->SendDebug('Forecast', 'Sending ' . count($forecast) . ' items', 0);
         $payload = [
             'type' => 'forecast',
-            'forecast' => $this->getForecastPayload(),
+            'forecast' => $forecast,
             'ts' => time()
         ];
         $this->UpdateVisualizationValue(json_encode($payload));
