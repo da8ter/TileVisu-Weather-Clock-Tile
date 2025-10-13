@@ -13,6 +13,9 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterPropertyInteger('TemperatureVariableID', 0);
         $this->RegisterPropertyString('Location', '');
 
+        // Register timers only in Create(); interval is set in ApplyChanges()
+        $this->RegisterTimer('UpdateTimer', 0, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
+
         // Runtime (Subscriptions)
         $this->RegisterAttributeInteger('LastTemperatureVarID', 0);
         $this->RegisterAttributeString('LastSlug', '');
@@ -63,9 +66,8 @@ class TileVisuWeatherClockTile extends IPSModule
             $this->WriteAttributeInteger('LastTemperatureVarID', 0);
         }
 
-        // Register/Update periodic timer: every 60 minutes (3600000 ms)
-        // ScriptText uses $_IPS['TARGET'] to call UpdateNow on this instance
-        $this->RegisterTimer('UpdateTimer', 3600000, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
+        // Set periodic timer interval: every 60 minutes (3600000 ms)
+        $this->SetTimerInterval('UpdateTimer', 3600000);
 
         // Trigger immediate update
         $this->sendImageUpdate();
