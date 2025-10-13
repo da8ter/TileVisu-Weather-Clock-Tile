@@ -4,13 +4,13 @@ Die **TileVisu Wetter Uhr Kachel** erweitert IP-Symcon um eine HTML-Kachel, die 
 
 ## Features
 - **Wetter-Header**: Die Kachel zeigt Temperatur, Tagesname und Min-/Max-Werte basierend auf dem ersten Eintrag der Prognose.
-- **Dynamische BWetterbilder**: Je nach Wetter wird ein passendes Hintergrundbild angezeigt.
+- **Dynamische Wetterbilder**: Je nach Wetter wird ein passendes Hintergrundbild angezeigt.
 - **FlipClock-Integration**: Uhrzeit und Datum erscheinen als FlipClock.
 
 ## Voraussetzungen
 - **IP-Symcon** 7.1.
-- **Wunderground/Weather.com Sync Modul** für Rohdaten der Vorhersage.
-- Eine Temperaturvariable (String/Float) zur Anzeige der aktuellen Außentemperatur.
+- **Open-Meteo API**: Standortauswahl im Formular, die Service-URL wird automatisch erzeugt (kein API‑Key erforderlich).
+- Optional: Eine Temperaturvariable (String/Float) zur Anzeige der aktuellen Außentemperatur. Falls nicht gesetzt, wird die aktuelle Temperatur aus der Open-Meteo API verwendet.
 
 ## Installation
 - Modul aus dem Module-Store auswählen oder über die GitHub-URL `https://github.com/da8ter/TileVisu-Wetter-Uhr.git` hinzufügen.
@@ -20,9 +20,7 @@ Die **TileVisu Wetter Uhr Kachel** erweitert IP-Symcon um eine HTML-Kachel, die 
 ## Konfiguration
 Im Formular stehen folgende Einstellungen zur Verfügung:
 - **Temperature variable**: Symcon-Variable, deren formatierter Wert in der Kachel angezeigt wird.
-- **Wunderground forecast variable (JSON raw data forecast)**: JSON-Ausgabe des Wunderground-Moduls; dient zur Befüllung der Vorhersage und zur Auswahl des Wetterbildes.
+- **Location**: Standortauswahl (Latitude/Longitude werden automatisch in die Open‑Meteo‑URL eingesetzt). Wenn kein Standort gewählt ist, wird als Fallback der Nordpol (90.0, 0.0) verwendet.
 
-## Support & Dankeschön
-- Spendenlinks (PayPal, Amazon Wunschliste) sind im Konfigurationsformular hinterlegt.
 
 Viel Spaß mit der TileVisu Wetter Uhr!
