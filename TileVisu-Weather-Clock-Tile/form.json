@@ -21,6 +21,49 @@
       "caption": "Note: this module uses the Open-Meteo API. Select your location; the service URL is built automatically."
     },
     {
+      "type": "CheckBox",
+      "name": "ShowWeather",
+      "caption": "Show weather"
+    },
+    {
+      "type": "CheckBox",
+      "name": "ShowForecast",
+      "caption": "Show forecast"
+    },
+    {
+      "type": "CheckBox",
+      "name": "ShowClock",
+      "caption": "Show clock"
+    },
+    {
+      "type": "CheckBox",
+      "name": "ShowDate",
+      "caption": "Show date"
+    },
+    {
+      "type": "SelectMedia",
+      "name": "CustomMediaID",
+      "caption": "Custom media image"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "DateFontSizePx",
+      "caption": "Date font size (px)",
+      "suffix": "px"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "ForecastWidthPercent",
+      "caption": "Forecast width (%)",
+      "suffix": "%"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "ClockWidthPercent",
+      "caption": "Clock width (%)",
+      "suffix": "%"
+    },
+    {
       "type": "Label",
       "caption": ""
     },

@@ -8,7 +8,15 @@
       "Donate message": "Say thank you and support the developer of this module:",
       "WebHook Control not found. Skipping hook registration.": "WebHook Control not found. Skipping hook registration.",
       "TileVisuWeatherClockTile": "TileVisu Weather Clock Tile",
-      "Say thank you and support the developer of this module:": "Say thank you and support the developer of this module:"
+      "Say thank you and support the developer of this module:": "Say thank you and support the developer of this module:",
+      "Show weather": "Show weather",
+      "Custom media image": "Custom media image",
+      "Show clock": "Show clock",
+      "Show date": "Show date",
+      "Show forecast": "Show forecast",
+      "Forecast width (%)": "Forecast width (%)",
+      "Clock width (%)": "Clock width (%)",
+      "Date font size (px)": "Date font size (px)"
     },
     "de": {
       "Temperature variable": "Temperatur-Variable",
@@ -18,7 +26,16 @@
       "Donate message": "Sag Danke und unterstütze den Entwickler dieses Moduls:",
       "WebHook Control not found. Skipping hook registration.": "WebHook Control nicht gefunden. Hook-Registrierung wird übersprungen.",
       "TileVisuWeatherClockTile": "TileVisu Wetter Uhr Kachel",
-      "Say thank you and support the developer of this module:": "Sag Danke und unterstütze den Entwickler dieses Moduls:"
+      "Say thank you and support the developer of this module:": "Sag Danke und unterstütze den Entwickler dieses Moduls:",
+      "Show weather": "Wetter",
+      "Custom media image": "Eigenes Hintergrundbild",
+      "Show clock": "Uhr",
+      "Show date": "Datum",
+      "Show forecast": "Aktuell und Vorhersage"
+    ,
+      "Forecast width (%)": "Breite Vorhersage (%)",
+      "Clock width (%)": "Breite Uhr (%)",
+      "Date font size (px)": "Schriftgröße Datum (px)"
     }
   }
 }

@@ -12,9 +12,20 @@ class TileVisuWeatherClockTile extends IPSModule
         // Config
         $this->RegisterPropertyInteger('TemperatureVariableID', 0);
         $this->RegisterPropertyString('Location', '');
+        $this->RegisterPropertyBoolean('ShowWeather', true);
+        $this->RegisterPropertyBoolean('ShowForecast', true);
+        $this->RegisterPropertyInteger('CustomMediaID', 0);
+        $this->RegisterPropertyBoolean('ShowClock', true);
+        $this->RegisterPropertyBoolean('ShowDate', true);
+        // Width configuration (% of window)
+        $this->RegisterPropertyInteger('ForecastWidthPercent', 25);
+        $this->RegisterPropertyInteger('ClockWidthPercent', 70);
+        // Date font size in px (0 = default CSS)
+        $this->RegisterPropertyInteger('DateFontSizePx', 30);
 
         // Register timers only in Create(); interval is set in ApplyChanges()
-        $this->RegisterTimer('UpdateTimer', 0, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
+        $this->RegisterTimer('UpdateTimer', 3600000, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
+
 
         // Runtime (Subscriptions)
         $this->RegisterAttributeInteger('LastTemperatureVarID', 0);
@@ -52,6 +63,7 @@ class TileVisuWeatherClockTile extends IPSModule
 
         $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
         $previousVarId = (int)$this->ReadAttributeInteger('LastTemperatureVarID');
+        $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
 
         if ($previousVarId > 0 && $previousVarId !== $temperatureVarId) {
             @$this->UnregisterMessage($previousVarId, VM_UPDATE);
@@ -71,8 +83,10 @@ class TileVisuWeatherClockTile extends IPSModule
 
         // Trigger immediate update
         $this->sendImageUpdate();
-        $this->sendTemperatureUpdate();
-        $this->sendForecastUpdate();
+        if ($showWeather) {
+            $this->sendTemperatureUpdate();
+            $this->sendForecastUpdate();
+        }
     }
 
     public function GetVisualizationTile()
@@ -91,8 +105,10 @@ class TileVisuWeatherClockTile extends IPSModule
     public function UpdateNow(): void
     {
         $this->sendImageUpdate();
-        $this->sendTemperatureUpdate();
-        $this->sendForecastUpdate();
+        if ((bool)$this->ReadPropertyBoolean('ShowWeather')) {
+            $this->sendTemperatureUpdate();
+            $this->sendForecastUpdate();
+        }
     }
 
     public function RequestAction($Ident, $Value)
@@ -203,6 +219,53 @@ if (isset($_IPS['SENDER']) && $_IPS['SENDER'] === 'WebHook') {
         echo 'asset not found';
         return;
     }
+
+    // Custom media override when weather is disabled or explicitly requested
+    $showWeatherRaw = @IPS_GetProperty($iid, 'ShowWeather');
+    $showWeather = false;
+    if (is_bool($showWeatherRaw)) {
+        $showWeather = $showWeatherRaw;
+    } elseif (is_string($showWeatherRaw)) {
+        $lr = strtolower(trim($showWeatherRaw));
+        $showWeather = ($lr === 'true' || $lr === '1');
+    } elseif (is_int($showWeatherRaw)) {
+        $showWeather = ($showWeatherRaw !== 0);
+    }
+    $customMediaId = (int)@IPS_GetProperty($iid, 'CustomMediaID');
+    $useCustom = (!$showWeather) && ($customMediaId > 0);
+    if (isset($_GET['custom'])) { $useCustom = true; }
+    if ($useCustom) {
+        $b64 = @IPS_GetMediaContent($customMediaId);
+        if (is_string($b64) && $b64 !== '') {
+            // Try detecting content type from header
+            $mime = 'image/jpeg';
+            $bin = @base64_decode($b64, true);
+            if ($bin !== false && strlen($bin) >= 12) {
+                $h = substr($bin, 0, 12);
+                if (strncmp($h, "\xFF\xD8\xFF", 3) === 0) {
+                    $mime = 'image/jpeg';
+                } elseif (strncmp($h, "\x89PNG\x0D\x0A\x1A\x0A", 8) === 0) {
+                    $mime = 'image/png';
+                } elseif (strncmp($h, 'GIF87a', 6) === 0 || strncmp($h, 'GIF89a', 6) === 0) {
+                    $mime = 'image/gif';
+                } elseif (substr($h, 0, 4) === 'RIFF' && substr($h, 8, 4) === 'WEBP') {
+                    $mime = 'image/webp';
+                }
+            }
+            $dataUri = 'data:' . $mime . ';base64,' . $b64;
+            header('Content-Type: application/json');
+            header('Cache-Control: no-cache, must-revalidate');
+            header('Pragma: no-cache');
+            echo json_encode(['dataUri' => $dataUri, 'name' => 'custom-media', 'ext' => '', 'ts' => time()]);
+            return;
+        }
+        // do not fallback to weather images when custom is requested or weather is disabled
+        http_response_code(404);
+        header('Content-Type: application/json');
+        echo json_encode(['dataUri' => '', 'name' => 'custom-media', 'ext' => '', 'ts' => time()]);
+        return;
+    }
+
     // Determiniere Name: direkt via ?name=..., oder aus ?slug= & ?tod=, sonst vom Modul
     $name = '';
     if (isset($_GET['name']) && is_string($_GET['name'])) {
@@ -273,6 +336,15 @@ PHP;
     private function buildVisualizationPayload(string $url, string $slug, string $tod): array
     {
         $ts = time();
+        $assetBase = '/hook/wetterbilder/' . $this->InstanceID;
+        // Clamp width percentages to [5..100]
+        $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
+        $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
+        // Clamp date font size to [0..200] (0 disables custom size)
+        $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
+        if ($df < 0) { $df = 0; }
+        if ($df > 200) { $df = 200; }
+        $showForecast = (bool)$this->ReadPropertyBoolean('ShowForecast');
         return [
             'type'      => 'image',
             'url'       => $url,
@@ -280,7 +352,15 @@ PHP;
             'timeOfDay' => $tod,
             'ts'        => $ts,
             'temperature' => $this->getTemperaturePayload(),
-            'forecast'    => $this->getForecastPayload()
+            'forecast'    => $this->getForecastPayload(),
+            'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
+            'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
+            'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
+            'assetBase'   => $assetBase,
+            'forecastWidthPercent' => $fw,
+            'clockWidthPercent'    => $cw,
+            'dateFontSizePx'       => $df,
+            'showForecast'         => $showForecast
         ];
     }
 
@@ -289,7 +369,53 @@ PHP;
         if (!method_exists($this, 'UpdateVisualizationValue')) {
             return;
         }
-        // Open-Meteo: aktuellen Wettercode und Tag/Nacht bestimmen
+        $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
+        $showClock   = (bool)$this->ReadPropertyBoolean('ShowClock');
+        $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
+        $hasCustom = $this->mediaHasContent($customMediaId);
+        // Clamp width percentages to [5..100]
+        $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
+        $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
+        $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
+        if ($df < 0) { $df = 0; }
+        if ($df > 200) { $df = 200; }
+
+        // If weather display is disabled: optionally show custom media image; no weather details
+        if (!$showWeather) {
+            $url = '';
+            if ($hasCustom) {
+                $url = '/hook/wetterbilder/' . $this->InstanceID . '?custom=1';
+            }
+            $payload = [
+                'type'        => 'image',
+                'url'         => $url,
+                'slug'        => '',
+                'timeOfDay'   => '',
+                'ts'          => time(),
+                'temperature' => null,
+                'forecast'    => [],
+                'showWeather' => false,
+                'showClock'   => $showClock,
+                'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
+                'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
+                'forecastWidthPercent' => $fw,
+                'clockWidthPercent'    => $cw,
+                'dateFontSizePx'       => $df,
+                'showForecast'         => false
+            ];
+            $this->UpdateVisualizationValue(json_encode($payload));
+            return;
+        }
+
+        // If a custom media is configured and has content, prefer it as background even when weather is enabled
+        if ($hasCustom) {
+            $url = '/hook/wetterbilder/' . $this->InstanceID . '?custom=1';
+            $payload = $this->buildVisualizationPayload($url, '', '');
+            $this->UpdateVisualizationValue(json_encode($payload));
+            return;
+        }
+
+        // Dynamic weather image via Open-Meteo
         $data = $this->fetchOpenMeteo();
         $wmoCode = 0;
         $isDay = null;
@@ -318,10 +444,59 @@ PHP;
         $this->WriteAttributeString('LastTimeOfDay', $tod);
 
         $baseName = $slug . '-' . $tod;
+        // Ensure the chosen background actually exists; otherwise pick a safe fallback
+        $resolved = $this->resolveExistingBackground($baseName, $tod);
+        if ($resolved !== $baseName) {
+            $this->SendDebug('Image', 'Fallback background from ' . $baseName . ' to ' . $resolved, 0);
+            $baseName = $resolved;
+        } else {
+            $this->SendDebug('Image', 'Using background ' . $baseName, 0);
+        }
         $webhookUrl = '/hook/wetterbilder/' . $this->InstanceID . '?name=' . rawurlencode($baseName);
 
         $payload = $this->buildVisualizationPayload($webhookUrl, $slug, $tod);
         $this->UpdateVisualizationValue(json_encode($payload));
+    }
+
+    private function mediaHasContent(int $mediaId): bool
+    {
+        if ($mediaId <= 0) {
+            return false;
+        }
+        if (function_exists('IPS_MediaExists') && !@IPS_MediaExists($mediaId)) {
+            return false;
+        }
+        $b64 = @IPS_GetMediaContent($mediaId);
+        return is_string($b64) && $b64 !== '';
+    }
+
+    private function resolveExistingBackground(string $baseName, string $tod): string
+    {
+        $dir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'wetterbilder' . DIRECTORY_SEPARATOR;
+        $exts = ['jpg','jpeg','png','webp'];
+        $candidates = function(string $name) use ($exts, $dir): array {
+            $items = [];
+            foreach ($exts as $e) {
+                $items[] = $dir . $name . '-min.' . $e;
+                $items[] = $dir . $name . '.' . $e;
+            }
+            return $items;
+        };
+        // 1) given name
+        foreach ($candidates($baseName) as $f) {
+            if (@is_file($f)) return $baseName;
+        }
+        // 2) hazy-<tod>
+        $hazy = 'hazy-' . $tod;
+        foreach ($candidates($hazy) as $f) {
+            if (@is_file($f)) return $hazy;
+        }
+        // 3) generic sunny/clear
+        $generic = ($tod === 'day') ? 'sunny-day' : 'clear-sky-night';
+        foreach ($candidates($generic) as $f) {
+            if (@is_file($f)) return $generic;
+        }
+        return $baseName; // give original back; webhook may still handle
     }
 
     private function mapIconToG5(int|string $iconCode, ?string $dayOrNight = null): string
@@ -406,10 +581,26 @@ PHP;
         if (!method_exists($this, 'UpdateVisualizationValue')) {
             return;
         }
+        if (!(bool)$this->ReadPropertyBoolean('ShowWeather')) {
+            return;
+        }
+        $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
+        $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
+        $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
+        if ($df < 0) { $df = 0; }
+        if ($df > 200) { $df = 200; }
         $payload = [
             'type' => 'temperature',
             'temperature' => $this->getTemperaturePayload(),
-            'ts' => time()
+            'ts' => time(),
+            'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
+            'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
+            'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
+            'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
+            'forecastWidthPercent' => $fw,
+            'clockWidthPercent'    => $cw,
+            'dateFontSizePx'       => $df,
+            'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast')
         ];
         $this->UpdateVisualizationValue(json_encode($payload));
     }
@@ -782,12 +973,29 @@ PHP;
         if (!method_exists($this, 'UpdateVisualizationValue')) {
             return;
         }
+        if (!(bool)$this->ReadPropertyBoolean('ShowWeather')) {
+            return;
+        }
+        $showForecast = (bool)$this->ReadPropertyBoolean('ShowForecast');
         $forecast = $this->getForecastPayload();
-        $this->SendDebug('Forecast', 'Sending ' . count($forecast) . ' items', 0);
+        $this->SendDebug('Forecast', 'Sending ' . count($forecast) . ' items (showForecast=' . ($showForecast ? 'true' : 'false') . ')', 0);
+        $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
+        $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
+        $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
+        if ($df < 0) { $df = 0; }
+        if ($df > 200) { $df = 200; }
         $payload = [
             'type' => 'forecast',
             'forecast' => $forecast,
-            'ts' => time()
+            'ts' => time(),
+            'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
+            'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
+            'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
+            'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
+            'forecastWidthPercent' => $fw,
+            'clockWidthPercent'    => $cw,
+            'dateFontSizePx'       => $df,
+            'showForecast'         => $showForecast
         ];
         $this->UpdateVisualizationValue(json_encode($payload));
     }

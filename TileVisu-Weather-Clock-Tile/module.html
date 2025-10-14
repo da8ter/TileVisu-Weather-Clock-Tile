@@ -73,6 +73,12 @@
       z-index: 1;
     }
 
+    /* Hide blur/gradient when weather is disabled */
+    body.no-weather #wrap::before,
+    body.no-weather #wrap::after {
+      content: none !important;
+    }
+
     #temperature {
       position: absolute;
       top: 60%;
@@ -232,6 +238,8 @@
       font-size: 14px;
       display: none;
     }
+#clock .flip-clock-list .flip-clock-list-item-inner .top:before { bottom: -0px; }
+#clock .flip-clock-list .flip-clock-list-item-inner .bottom:before { top: -1px; }
     .show-error #error { display: block; }
   </style>
   <script>
@@ -240,6 +248,10 @@
     let clockSyncTimer = null;
     let resizeClockFrame = null;
     let leftStackScaleFrame = null;
+    // Backend-configurable percentages (defaults)
+    let forecastWidthPercent = 25; // % of window width
+    let clockWidthPercent = 70;    // % of window width
+    let dateFontSizePx = 0;        // 0 = use CSS default
 
     function injectStyle(targetId, base64) {
       const styleEl = document.getElementById(targetId);
@@ -272,6 +284,28 @@
         link.href = cssUrl;
         document.head.appendChild(link);
         // JS
+        const s = document.createElement('script');
+        s.src = jsUrl;
+        s.async = true;
+        s.onload = () => { /* FlipClock available as window.FlipClock */ };
+        document.head.appendChild(s);
+        flipClockAssetsRequested = true;
+      } catch (e) { console.error(e); }
+    }
+
+    function ensureFlipClockAssetsFromBase(base, ts) {
+      try {
+        if (flipClockAssetsRequested) return;
+        if (!base || typeof base !== 'string') return;
+        const clean = base.split('?')[0];
+        if (!clean) return;
+        const v = (typeof ts === 'number' && isFinite(ts)) ? ts : Date.now();
+        const cssUrl = clean + '?asset=flipclock.min.css&v=' + v;
+        const jsUrl  = clean + '?asset=flipclock.min.js&v=' + v;
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = cssUrl;
+        document.head.appendChild(link);
         const s = document.createElement('script');
         s.src = jsUrl;
         s.async = true;
@@ -315,16 +349,31 @@
       };
       if (url && typeof url === 'string' && url.trim() !== '') {
         const u = withTs(url.trim(), ts);
-        // WebHook liefert JSON { dataUri: 'data:image/...;base64,...' }
         fetch(u, { cache: 'no-store' })
-          .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
-          .then((j) => {
-            const dataUri = j && typeof j.dataUri === 'string' ? j.dataUri : '';
-            if (dataUri.startsWith('data:')) {
-              setBg(dataUri);
-            } else {
-              showError('Kein Bild verfügbar');
+          .then((res) => {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const ct = (res.headers.get('content-type') || '').toLowerCase();
+            if (ct.includes('application/json')) {
+              return res.json().then((j) => ({ kind: 'json', value: j }));
             }
+            return res.blob().then((b) => ({ kind: 'blob', value: b }));
+          })
+          .then((payload) => {
+            if (!payload) throw new Error('Empty payload');
+            if (payload.kind === 'json') {
+              const j = payload.value || {};
+              const dataUri = j && typeof j.dataUri === 'string' ? j.dataUri : '';
+              if (dataUri.startsWith('data:')) {
+                setBg(dataUri);
+                return;
+              }
+              throw new Error('JSON ohne dataUri');
+            } else if (payload.kind === 'blob') {
+              const objURL = URL.createObjectURL(payload.value);
+              setBg(objURL);
+              return;
+            }
+            throw new Error('Unbekannte Antwort');
           })
           .catch(() => showError('Kein Bild verfügbar'));
         return;
@@ -333,7 +382,21 @@
       showError('Kein Bild verfügbar');
     }
 
+    function clearImage() {
+      const wrap = document.getElementById('wrap');
+      if (wrap) {
+        wrap.style.backgroundImage = 'none';
+        wrap.removeAttribute('data-image-info');
+      }
+      document.body.classList.remove('show-error');
+    }
+
     function showError(msg) {
+      // Suppress error UI if weather is intentionally disabled
+      if (document && document.body && document.body.classList.contains('no-weather')) {
+        clearImage();
+        return;
+      }
       const el = document.getElementById('error');
       el.textContent = msg || 'Unbekannter Fehler';
       document.body.classList.add('show-error');
@@ -417,6 +480,57 @@
       });
     }
 
+    // Sichtbarkeit von Wetter (left-stack), Uhr (clock-wrapper), Datum (#date) und Forecast (#forecast) steuern
+    function applyVisibility(showWeather, showClock, showDate, showForecast) {
+      try {
+        const leftStack = document.getElementById('left-stack');
+        const clockWrap = document.getElementById('clock-wrapper');
+        const dateEl = document.getElementById('date');
+        const forecastEl = document.getElementById('forecast');
+        const temperatureEl = document.getElementById('temperature');
+        if (document && document.body) {
+          document.body.classList.toggle('no-weather', !showWeather);
+        }
+        if (leftStack) {
+          leftStack.style.display = showWeather ? '' : 'none';
+        }
+        if (clockWrap) {
+          clockWrap.style.display = showClock ? '' : 'none';
+        }
+        if (dateEl) {
+          const sd = (typeof showDate === 'boolean') ? showDate : true;
+          dateEl.style.display = sd ? '' : 'none';
+        }
+        if (forecastEl) {
+          const sf = (typeof showForecast === 'boolean') ? showForecast : true;
+          forecastEl.style.display = sf ? '' : 'none';
+        }
+        if (temperatureEl) {
+          const sf = (typeof showForecast === 'boolean') ? showForecast : true;
+          temperatureEl.style.display = sf ? '' : 'none';
+        }
+        if (showWeather) {
+          scheduleLeftStackScale();
+        }
+        if (showClock) {
+          scheduleResizeClock();
+        }
+      } catch (e) { /* noop */ }
+    }
+
+    function applyDateFontSize() {
+      try {
+        const dateEl = document.getElementById('date');
+        if (!dateEl) return;
+        const px = (typeof dateFontSizePx === 'number' && isFinite(dateFontSizePx)) ? dateFontSizePx : 0;
+        if (px > 0) {
+          dateEl.style.fontSize = `${px}px`;
+        } else {
+          dateEl.style.fontSize = '';
+        }
+      } catch (_) {}
+    }
+
     function scaleLeftStack() {
       const stack = document.getElementById('left-stack');
       if (!stack) {
@@ -426,7 +540,8 @@
       stack.style.transform = '';
       stack.style.maxWidth = '';
 
-      const maxWidth = window.innerWidth * 0.25;
+      const percent = (typeof forecastWidthPercent === 'number' && isFinite(forecastWidthPercent)) ? forecastWidthPercent : 25;
+      const maxWidth = window.innerWidth * (Math.max(5, Math.min(100, percent)) / 100);
       if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
         return;
       }
@@ -480,9 +595,9 @@
         return;
       }
 
-      const desiredWidth = window.innerWidth * 0.7;
-      const maxWidth = window.innerWidth * 0.9;
-      const availableWidth = Math.min(Math.max(desiredWidth, 300), maxWidth);
+      const pct = (typeof clockWidthPercent === 'number' && isFinite(clockWidthPercent)) ? clockWidthPercent : 70;
+      const maxWindowWidth = window.innerWidth * 0.95;
+      const availableWidth = Math.min(Math.max(window.innerWidth * (Math.max(5, Math.min(100, pct)) / 100), 300), maxWindowWidth);
       const availableHeight = window.innerHeight * 0.5;
 
       const scale = Math.min(availableWidth / rect.width, availableHeight / rect.height);
@@ -531,11 +646,63 @@
           }
         }
 
+        // Toggle visibility if flags are present
+        if (typeof data.showWeather === 'boolean' || typeof data.showClock === 'boolean' || typeof data.showDate === 'boolean' || typeof data.showForecast === 'boolean') {
+          const sw = typeof data.showWeather === 'boolean' ? data.showWeather : true;
+          const sc = typeof data.showClock === 'boolean' ? data.showClock : true;
+          const sd = typeof data.showDate === 'boolean' ? data.showDate : true;
+          const sf = typeof data.showForecast === 'boolean' ? data.showForecast : true;
+          applyVisibility(!!sw, !!sc, !!sd, !!sf);
+        }
+
+        // Read optional width configuration (clamp to 5..100)
+        if (typeof data.forecastWidthPercent === 'number' && isFinite(data.forecastWidthPercent)) {
+          const v = Math.max(5, Math.min(100, Math.round(data.forecastWidthPercent)));
+          if (v !== forecastWidthPercent) {
+            forecastWidthPercent = v;
+            scheduleLeftStackScale();
+          }
+        }
+        if (typeof data.clockWidthPercent === 'number' && isFinite(data.clockWidthPercent)) {
+          const v = Math.max(5, Math.min(100, Math.round(data.clockWidthPercent)));
+          if (v !== clockWidthPercent) {
+            clockWidthPercent = v;
+            scheduleResizeClock();
+          }
+        }
+        // Read optional date font size (px); 0 keeps CSS default
+        if (typeof data.dateFontSizePx === 'number' && isFinite(data.dateFontSizePx)) {
+          const v = Math.max(0, Math.min(200, Math.round(data.dateFontSizePx)));
+          if (v !== dateFontSizePx) {
+            dateFontSizePx = v;
+            applyDateFontSize();
+          }
+        }
+
         switch (data.type) {
           case 'image':
-            setImage(data.url || '', data.slug || '', data.timeOfDay || '', data.ts || 0);
-            // Ensure FlipClock assets are loaded via the same WebHook base (cache-busted)
-            ensureFlipClockAssetsFromUrl(data.url || '', data.ts || Date.now());
+            {
+              const sw = (typeof data.showWeather === 'boolean') ? data.showWeather : true;
+              const url = (typeof data.url === 'string') ? data.url.trim() : '';
+              if (url) {
+                setImage(url, data.slug || '', data.timeOfDay || '', data.ts || 0);
+                // Ensure FlipClock assets are loaded via the same WebHook base (cache-busted)
+                ensureFlipClockAssetsFromUrl(url, data.ts || Date.now());
+                if (typeof data.assetBase === 'string' && data.assetBase.trim()) {
+                  ensureFlipClockAssetsFromBase(data.assetBase.trim(), data.ts || Date.now());
+                }
+              } else if (!sw) {
+                clearImage();
+                if (typeof data.assetBase === 'string' && data.assetBase.trim()) {
+                  ensureFlipClockAssetsFromBase(data.assetBase.trim(), data.ts || Date.now());
+                }
+              } else {
+                showError('Kein Bild verfügbar');
+                if (typeof data.assetBase === 'string' && data.assetBase.trim()) {
+                  ensureFlipClockAssetsFromBase(data.assetBase.trim(), data.ts || Date.now());
+                }
+              }
+            }
             if (Array.isArray(data.forecast)) {
               applyFirstDayToTemperature(data.forecast[0] || null);
               renderForecast(data.forecast);
