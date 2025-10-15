@@ -2,11 +2,11 @@
     "id": "{BADDF8FB-1465-E070-8DBC-EE4136BC701B}",
     "name": "TileVisu-Weather-Clock-Tile",
     "author": "Stephan Sprick",
-    "url": "https://github.com/da8ter/TileVisu-Weather-Header-Tile.git",
+    "url": "https://github.com/da8ter/TileVisu-Weather-Clock-Tile.git",
     "compatibility": {
         "version": "7.1"
     },
-    "version": "1.0.2",
-    "build": 2,
-    "date": 20251410
+    "version": "1.0.3",
+    "build": 4,
+    "date": 20251510
 }
