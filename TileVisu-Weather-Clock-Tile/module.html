@@ -195,7 +195,7 @@
       align-items: center;
       justify-content: center;
       gap: 0.75rem;
-      max-width: 90vw;
+      max-width: 100vw;
       max-height: 50vh;
       overflow: visible;
       z-index: 2;
@@ -203,9 +203,14 @@
     #clock {
       display: inline-block;
       transform-origin: center top;
+      /* Let JS cap the width via font-size; do not clip */
+      overflow: visible;
     }
     #clock .flip-clock {
       margin: 0;
+      width: auto;
+      /* Base size from backend percent; JS will still cap as fallback */
+      font-size: clamp(10px, calc(var(--clock-pct, 70vw) / 18.5), 200px);
     }
     #clock-wrapper .flip-clock {
       float: none !important;
@@ -220,7 +225,8 @@
       display: none;
     }
     #date {
-      font-size: 1.7rem;
+      /* Cap size while remaining responsive; backend can override via dateFontSizePx */
+      font-size: clamp(12px, 2.4vw, 50px);
       font-weight: 500;
       letter-spacing: 0.04em;
       text-align: center;
@@ -228,6 +234,10 @@
       margin-top: 10px;
       display: block;
       width: 100%;
+      /* prevent line breaks */
+      white-space: nowrap;
+      overflow: visible;
+      text-overflow: ellipsis;
     }
     #error {
       position: absolute;
@@ -248,10 +258,15 @@
     let clockSyncTimer = null;
     let resizeClockFrame = null;
     let leftStackScaleFrame = null;
+    let resizeDebounceTimer = null;
+    let clockResizeObserver = null;
+    let clockMutationObserver = null;
+    let clockObservedEl = null;
     // Backend-configurable percentages (defaults)
     let forecastWidthPercent = 25; // % of window width
     let clockWidthPercent = 70;    // % of window width
     let dateFontSizePx = 0;        // 0 = use CSS default
+    let dateScaleFactor = 1;       // 1..5 factor for date size relative to clock
 
     function injectStyle(targetId, base64) {
       const styleEl = document.getElementById(targetId);
@@ -282,12 +297,13 @@
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = cssUrl;
+        link.onload = () => { try { scheduleResizeClock(); } catch (_) {} };
         document.head.appendChild(link);
         // JS
         const s = document.createElement('script');
         s.src = jsUrl;
         s.async = true;
-        s.onload = () => { /* FlipClock available as window.FlipClock */ };
+        s.onload = () => { try { scheduleResizeClock(); } catch (_) {} };
         document.head.appendChild(s);
         flipClockAssetsRequested = true;
       } catch (e) { console.error(e); }
@@ -305,11 +321,12 @@
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = cssUrl;
+        link.onload = () => { try { scheduleResizeClock(); } catch (_) {} };
         document.head.appendChild(link);
         const s = document.createElement('script');
         s.src = jsUrl;
         s.async = true;
-        s.onload = () => { /* FlipClock available as window.FlipClock */ };
+        s.onload = () => { try { scheduleResizeClock(); } catch (_) {} };
         document.head.appendChild(s);
         flipClockAssetsRequested = true;
       } catch (e) { console.error(e); }
@@ -470,6 +487,69 @@
       });
     }
 
+    // Cap the clock width by adjusting inline font-size only if it exceeds the target
+    function applyClockCap(clockEl) {
+      try {
+        if (!clockEl) return;
+        const pct = (typeof clockWidthPercent === 'number' && isFinite(clockWidthPercent))
+          ? Math.max(5, Math.min(100, clockWidthPercent))
+          : 70;
+        const targetWidth = Math.max(0, Math.floor(window.innerWidth * (pct / 100)));
+        const rect = clockEl.getBoundingClientRect();
+        if (rect.width && targetWidth && rect.width > targetWidth + 1) {
+          const computed = window.getComputedStyle(clockEl);
+          const fontPx = parseFloat(computed.fontSize) || 16;
+          const newFontPx = Math.max(8, Math.min(400, fontPx * (targetWidth / rect.width)));
+          clockEl.style.fontSize = `${newFontPx}px`;
+        }
+      } catch (_) {}
+    }
+
+    // Attach observers to the current .flip-clock element and keep them attached if DOM changes
+    function updateClockObservers() {
+      try {
+        const clockContainer = document.getElementById('clock');
+        if (!clockContainer) return;
+        let el = null;
+        if (clockContainer.classList.contains('flip-clock')) {
+          el = clockContainer;
+        } else {
+          el = clockContainer.querySelector('.flip-clock');
+        }
+        if (!el) return;
+
+        // If observed element changed, re-attach the ResizeObserver
+        if (el !== clockObservedEl) {
+          if (clockResizeObserver && clockObservedEl) {
+            try { clockResizeObserver.unobserve(clockObservedEl); } catch (_) {}
+          }
+          if (!clockResizeObserver && typeof ResizeObserver !== 'undefined') {
+            clockResizeObserver = new ResizeObserver(() => {
+              applyClockCap(clockObservedEl);
+            });
+          }
+          if (clockResizeObserver) {
+            clockResizeObserver.observe(el);
+            clockObservedEl = el;
+          }
+          // Initial cap for the new element
+          applyClockCap(el);
+        }
+
+        // Setup a MutationObserver once to catch DOM replacement under #clock
+        if (!clockMutationObserver && typeof MutationObserver !== 'undefined') {
+          clockMutationObserver = new MutationObserver(() => {
+            updateClockObservers();
+          });
+          clockMutationObserver.observe(clockContainer, { childList: true, subtree: true });
+        }
+      } catch (_) {}
+    }
+
+    function ensureClockObserver() {
+      updateClockObservers();
+    }
+
     function scheduleLeftStackScale() {
       if (leftStackScaleFrame) {
         cancelAnimationFrame(leftStackScaleFrame);
@@ -541,22 +621,52 @@
       stack.style.maxWidth = '';
 
       const percent = (typeof forecastWidthPercent === 'number' && isFinite(forecastWidthPercent)) ? forecastWidthPercent : 25;
-      const maxWidth = window.innerWidth * (Math.max(5, Math.min(100, percent)) / 100);
-      if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
+      const cfgWidth = window.innerWidth * (Math.max(5, Math.min(100, percent)) / 100);
+      if (!Number.isFinite(cfgWidth) || cfgWidth <= 0) {
         return;
       }
 
-      const rect = stack.getBoundingClientRect();
-      if (!rect.width) {
+      // Use #temperature as the collision base (fallback to stack if missing)
+      const tempEl = document.getElementById('temperature');
+      const baseEl = tempEl || stack;
+      const baseRect = baseEl.getBoundingClientRect();
+      if (!baseRect.width) {
         return;
       }
 
-      const scale = Math.min(1, maxWidth / rect.width);
-      if (scale < 1) {
-        stack.style.transform = `scale(${scale})`;
+      // Horizontal-only: measure free space until the actual flip-clock's left edge
+      const clockWrap = document.getElementById('clock-wrapper');
+      const flip = document.querySelector('#clock .flip-clock');
+      const gap = 15; // px spacing
+      let availableToClock = Infinity;
+      let clockVisible = false;
+      const measureEl = flip || clockWrap || null;
+      if (measureEl) {
+        const cs = window.getComputedStyle(measureEl);
+        clockVisible = cs && cs.display !== 'none' && cs.visibility !== 'hidden';
       }
-
-      stack.style.maxWidth = `${maxWidth}px`;
+      if (clockVisible && measureEl) {
+        const clockRect = measureEl.getBoundingClientRect();
+        availableToClock = Math.max(0, clockRect.left - gap - baseRect.left);
+      }
+      // Compute scales:
+      // - cfgScale limits overall left-stack width to backend percent
+      // - freeScale uses temperature width to fill space until the clock
+      const stackRect = stack.getBoundingClientRect();
+      if (!stackRect.width) {
+        return;
+      }
+      const minScale = 0.5;
+      const cfgScaleRaw = cfgWidth / stackRect.width;
+      const cfgScale = Number.isFinite(cfgScaleRaw) && cfgScaleRaw > 0 ? cfgScaleRaw : 1;
+      const freeScaleRaw = (!clockVisible || !Number.isFinite(availableToClock)) ? Infinity : (availableToClock / baseRect.width);
+      const freeScale = Number.isFinite(freeScaleRaw) && freeScaleRaw > 0 ? freeScaleRaw : Infinity;
+      let scale = Math.min(cfgScale, freeScale);
+      if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+      scale = Math.max(minScale, scale);
+      stack.style.transform = `scale(${scale})`;
+      // Do not constrain with maxWidth; transform defines the visual width
+      stack.style.maxWidth = '';
     }
 
     function resizeClock() {
@@ -586,30 +696,48 @@
         }
       }
       console.log('resizeClock: start');
-      clockContainer.style.transform = 'scale(1)';
+      // Reset any transform-based scaling and let CSS handle size
+      clockContainer.style.transform = 'none';
       clockContainer.style.height = '';
       clockContainer.style.width = '';
+      // Set CSS variable based on backend percent so width ≈ pct vw
+      const pct = (typeof clockWidthPercent === 'number' && isFinite(clockWidthPercent))
+        ? Math.max(5, Math.min(100, clockWidthPercent))
+        : 70;
+      clockContainer.style.setProperty('--clock-pct', pct + 'vw');
+      // No margin side-effects
+      clockContainer.style.marginBottom = '0';
+      // Calculate target width once for both clock and date sizing
+      const targetWidth = Math.max(0, Math.floor(window.innerWidth * (pct / 100)));
 
-      const rect = clockEl.getBoundingClientRect();
-      if (!rect.width || !rect.height) {
-        return;
-      }
-
-      const pct = (typeof clockWidthPercent === 'number' && isFinite(clockWidthPercent)) ? clockWidthPercent : 70;
-      const maxWindowWidth = window.innerWidth * 0.95;
-      const availableWidth = Math.min(Math.max(window.innerWidth * (Math.max(5, Math.min(100, pct)) / 100), 300), maxWindowWidth);
-      const availableHeight = window.innerHeight * 0.5;
-
-      const scale = Math.min(availableWidth / rect.width, availableHeight / rect.height);
-      if (!Number.isFinite(scale) || scale <= 0) {
-        return;
-      }
-
-      clockContainer.style.transform = `scale(${scale})`;
-      clockContainer.style.width = `${rect.width}px`;
-      clockContainer.style.height = `${rect.height * scale}px`;
-      const extraHeight = rect.height * (scale - 1);
-      clockContainer.style.marginBottom = extraHeight > 0 ? `${extraHeight}px` : '0';
+      // Install observer to cap width on any post-layout changes
+      ensureClockObserver();
+      // Lock exact width now: set inline font-size so width == target
+      try {
+        const rect = clockEl.getBoundingClientRect();
+        const computed = window.getComputedStyle(clockEl);
+        const fontPx = parseFloat(computed.fontSize) || 16;
+        if (rect.width && targetWidth) {
+          const newFontPx = Math.max(8, Math.min(400, fontPx * (targetWidth / rect.width)));
+          clockEl.style.fontSize = `${newFontPx}px`;
+        }
+      } catch (_) {}
+      // Size the date based on targetWidth, unless backend override is set
+      try {
+        const dateEl = document.getElementById('date');
+        const pxOverride = (typeof dateFontSizePx === 'number' && isFinite(dateFontSizePx) && dateFontSizePx > 0) ? dateFontSizePx : 0;
+        if (dateEl && !pxOverride) {
+          // Compute from final clock font size: (clockPx / 3) * dateScaleFactor (1..5)
+          const finalClockPx = parseFloat(window.getComputedStyle(clockEl).fontSize) || 16;
+          const factor = (typeof dateScaleFactor === 'number' && isFinite(dateScaleFactor)) ? Math.max(1, Math.min(5, dateScaleFactor)) : 1;
+          const datePx = Math.max(10, Math.round((finalClockPx / 3) * factor));
+          dateEl.style.fontSize = `${datePx}px`;
+          dateEl.style.whiteSpace = 'nowrap';
+          dateEl.style.textOverflow = 'ellipsis';
+        }
+      } catch (_) {}
+      // Re-scale left stack now that clock size is final
+      try { scheduleLeftStackScale(); } catch (_) {}
     }
 
     function updateDate() {
@@ -676,6 +804,14 @@
           if (v !== dateFontSizePx) {
             dateFontSizePx = v;
             applyDateFontSize();
+          }
+        }
+        // Read optional date scale factor (1..5); used when no px override
+        if (typeof data.dateScaleFactor === 'number' && isFinite(data.dateScaleFactor)) {
+          const v = Math.max(1, Math.min(5, Math.round(data.dateScaleFactor)));
+          if (v !== dateScaleFactor) {
+            dateScaleFactor = v;
+            scheduleResizeClock();
           }
         }
 
@@ -966,11 +1102,29 @@
     }
 
     window.addEventListener('resize', scheduleLeftStackScale);
+    window.addEventListener('resize', () => {
+      // Allow smooth live scaling during resize by removing inline font-size
+      try {
+        const clockContainer = document.getElementById('clock');
+        const el = clockContainer ? (clockContainer.classList.contains('flip-clock') ? clockContainer : clockContainer.querySelector('.flip-clock')) : null;
+        if (el && el.style) {
+          el.style.removeProperty('font-size');
+        }
+      } catch (_) {}
+      if (resizeDebounceTimer) {
+        clearTimeout(resizeDebounceTimer);
+      }
+      resizeDebounceTimer = setTimeout(() => {
+        resizeDebounceTimer = null;
+        scheduleResizeClock();
+      }, 150);
+    });
 
     document.addEventListener('DOMContentLoaded', () => {
       requestInitial();
       initClock();
       scheduleLeftStackScale();
+      scheduleResizeClock();
     });
   </script>
 </head>

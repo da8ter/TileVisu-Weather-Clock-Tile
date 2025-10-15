@@ -16,7 +16,9 @@
       "Show forecast": "Show forecast",
       "Forecast width (%)": "Forecast width (%)",
       "Clock width (%)": "Clock width (%)",
-      "Date font size (px)": "Date font size (px)"
+      "Date font size (px)": "Date font size (px)",
+      "Date font size (px, 0 = auto)": "Date font size (px, 0 = auto)",
+      "Date size factor (1-5)": "Date size factor (1-5)"
     },
     "de": {
       "Temperature variable": "Temperatur-Variable",
@@ -31,11 +33,12 @@
       "Custom media image": "Eigenes Hintergrundbild",
       "Show clock": "Uhr",
       "Show date": "Datum",
-      "Show forecast": "Aktuell und Vorhersage"
-    ,
+      "Show forecast": "Aktuell und Vorhersage",
       "Forecast width (%)": "Breite Vorhersage (%)",
       "Clock width (%)": "Breite Uhr (%)",
-      "Date font size (px)": "Schriftgröße Datum (px)"
+      "Date font size (px)": "Schriftgröße Datum (px)",
+      "Date font size (px, 0 = auto)": "Schriftgröße Datum (px, 0 = auto)",
+      "Date size factor (1-5)": "Größenfaktor Datum (1–5)"
     }
   }
 }

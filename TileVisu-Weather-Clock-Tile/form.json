@@ -48,8 +48,15 @@
     {
       "type": "NumberSpinner",
       "name": "DateFontSizePx",
-      "caption": "Date font size (px)",
+      "caption": "Date font size (px, 0 = auto)",
       "suffix": "px"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "DateScaleFactor",
+      "caption": "Date size factor (1-5)",
+      "minimum": 1,
+      "maximum": 5
     },
     {
       "type": "NumberSpinner",

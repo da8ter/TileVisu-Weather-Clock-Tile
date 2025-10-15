@@ -21,7 +21,9 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterPropertyInteger('ForecastWidthPercent', 25);
         $this->RegisterPropertyInteger('ClockWidthPercent', 70);
         // Date font size in px (0 = default CSS)
-        $this->RegisterPropertyInteger('DateFontSizePx', 30);
+        $this->RegisterPropertyInteger('DateFontSizePx', 0);
+        // Date scale factor (1..5), multiplies (clockFontPx / 3)
+        $this->RegisterPropertyInteger('DateScaleFactor', 3);
 
         // Register timers only in Create(); interval is set in ApplyChanges()
         $this->RegisterTimer('UpdateTimer', 3600000, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
@@ -344,6 +346,10 @@ PHP;
         $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
         if ($df < 0) { $df = 0; }
         if ($df > 200) { $df = 200; }
+        // Clamp date scale factor to [1..5]
+        $ds = (int)$this->ReadPropertyInteger('DateScaleFactor');
+        if ($ds < 1) { $ds = 1; }
+        if ($ds > 5) { $ds = 5; }
         $showForecast = (bool)$this->ReadPropertyBoolean('ShowForecast');
         return [
             'type'      => 'image',
@@ -360,6 +366,7 @@ PHP;
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
             'dateFontSizePx'       => $df,
+            'dateScaleFactor'      => $ds,
             'showForecast'         => $showForecast
         ];
     }
@@ -401,6 +408,7 @@ PHP;
                 'forecastWidthPercent' => $fw,
                 'clockWidthPercent'    => $cw,
                 'dateFontSizePx'       => $df,
+                'dateScaleFactor'      => max(1, min(5, (int)$this->ReadPropertyInteger('DateScaleFactor'))),
                 'showForecast'         => false
             ];
             $this->UpdateVisualizationValue(json_encode($payload));
@@ -589,6 +597,9 @@ PHP;
         $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
         if ($df < 0) { $df = 0; }
         if ($df > 200) { $df = 200; }
+        $ds = (int)$this->ReadPropertyInteger('DateScaleFactor');
+        if ($ds < 1) { $ds = 1; }
+        if ($ds > 5) { $ds = 5; }
         $payload = [
             'type' => 'temperature',
             'temperature' => $this->getTemperaturePayload(),
@@ -600,6 +611,7 @@ PHP;
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
             'dateFontSizePx'       => $df,
+            'dateScaleFactor'      => $ds,
             'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast')
         ];
         $this->UpdateVisualizationValue(json_encode($payload));
