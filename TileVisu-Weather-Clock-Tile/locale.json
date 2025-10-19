@@ -16,6 +16,7 @@
       "Show forecast": "Show forecast",
       "Forecast width (%)": "Forecast width (%)",
       "Clock width (%)": "Clock width (%)",
+      "Clock vertical position (%)": "Clock vertical position (smaller=upper, larger=lower)",
       "Date font size (px)": "Date font size (px)",
       "Date font size (px, 0 = auto)": "Date font size (px, 0 = auto)",
       "Date size factor (1-5)": "Date size factor (1-5)"
@@ -36,6 +37,7 @@
       "Show forecast": "Aktuell und Vorhersage",
       "Forecast width (%)": "Breite Vorhersage (%)",
       "Clock width (%)": "Breite Uhr (%)",
+      "Clock vertical position (%)": "Vertikale Position der Uhr (kleiner=hoch, größer=runter)",
       "Date font size (px)": "Schriftgröße Datum (px)",
       "Date font size (px, 0 = auto)": "Schriftgröße Datum (px, 0 = auto)",
       "Date size factor (1-5)": "Größenfaktor Datum (1–5)"

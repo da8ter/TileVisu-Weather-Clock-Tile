@@ -20,6 +20,7 @@ class TileVisuWeatherClockTile extends IPSModule
         // Width configuration (% of window)
         $this->RegisterPropertyInteger('ForecastWidthPercent', 25);
         $this->RegisterPropertyInteger('ClockWidthPercent', 70);
+        $this->RegisterPropertyInteger('ClockVerticalPercent', 50);
         // Date font size in px (0 = default CSS)
         $this->RegisterPropertyInteger('DateFontSizePx', 0);
         // Date scale factor (1..5), multiplies (clockFontPx / 3)
@@ -342,6 +343,9 @@ PHP;
         // Clamp width percentages to [5..100]
         $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
         $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
+        $cv = (int)$this->ReadPropertyInteger('ClockVerticalPercent');
+        if ($cv < 0) { $cv = 0; }
+        if ($cv > 100) { $cv = 100; }
         // Clamp date font size to [0..200] (0 disables custom size)
         $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
         if ($df < 0) { $df = 0; }
@@ -365,6 +369,7 @@ PHP;
             'assetBase'   => $assetBase,
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
+            'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
             'dateScaleFactor'      => $ds,
             'showForecast'         => $showForecast
@@ -383,6 +388,9 @@ PHP;
         // Clamp width percentages to [5..100]
         $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
         $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
+        $cv = (int)$this->ReadPropertyInteger('ClockVerticalPercent');
+        if ($cv < 0) { $cv = 0; }
+        if ($cv > 100) { $cv = 100; }
         $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
         if ($df < 0) { $df = 0; }
         if ($df > 200) { $df = 200; }
@@ -407,6 +415,7 @@ PHP;
                 'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
                 'forecastWidthPercent' => $fw,
                 'clockWidthPercent'    => $cw,
+                'clockVerticalPercent' => $cv,
                 'dateFontSizePx'       => $df,
                 'dateScaleFactor'      => max(1, min(5, (int)$this->ReadPropertyInteger('DateScaleFactor'))),
                 'showForecast'         => false
@@ -594,6 +603,9 @@ PHP;
         }
         $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
         $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
+        $cv = (int)$this->ReadPropertyInteger('ClockVerticalPercent');
+        if ($cv < 0) { $cv = 0; }
+        if ($cv > 100) { $cv = 100; }
         $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
         if ($df < 0) { $df = 0; }
         if ($df > 200) { $df = 200; }
@@ -610,6 +622,7 @@ PHP;
             'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
+            'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
             'dateScaleFactor'      => $ds,
             'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast')
@@ -993,6 +1006,9 @@ PHP;
         $this->SendDebug('Forecast', 'Sending ' . count($forecast) . ' items (showForecast=' . ($showForecast ? 'true' : 'false') . ')', 0);
         $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
         $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
+        $cv = (int)$this->ReadPropertyInteger('ClockVerticalPercent');
+        if ($cv < 0) { $cv = 0; }
+        if ($cv > 100) { $cv = 100; }
         $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
         if ($df < 0) { $df = 0; }
         if ($df > 200) { $df = 200; }
@@ -1006,6 +1022,7 @@ PHP;
             'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
+            'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
             'showForecast'         => $showForecast
         ];

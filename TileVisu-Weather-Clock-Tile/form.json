@@ -71,6 +71,15 @@
       "suffix": "%"
     },
     {
+      "type": "NumberSpinner",
+      "name": "ClockVerticalPercent",
+      "caption": "Clock vertical position (%)",
+      "suffix": "%",
+      "minimum": 20,
+      "maximum": 70
+
+    },
+    {
       "type": "Label",
       "caption": ""
     },

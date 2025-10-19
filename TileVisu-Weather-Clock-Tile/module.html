@@ -211,6 +211,8 @@
       width: auto;
       /* Base size from backend percent; JS will still cap as fallback */
       font-size: clamp(10px, calc(var(--clock-pct, 70vw) / 18.5), 200px);
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: 'tnum' 1;
     }
     #clock-wrapper .flip-clock {
       float: none !important;
@@ -267,6 +269,10 @@
     let clockWidthPercent = 70;    // % of window width
     let dateFontSizePx = 0;        // 0 = use CSS default
     let dateScaleFactor = 1;       // 1..5 factor for date size relative to clock
+    let clockVerticalPercent = 50;
+    let suppressNonWindowResize = true;
+    let inWindowResize = false;
+    let initialClockLayoutDone = false;
 
     function injectStyle(targetId, base64) {
       const styleEl = document.getElementById(targetId);
@@ -297,13 +303,13 @@
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = cssUrl;
-        link.onload = () => { try { scheduleResizeClock(); } catch (_) {} };
+        link.onload = () => {};
         document.head.appendChild(link);
         // JS
         const s = document.createElement('script');
         s.src = jsUrl;
         s.async = true;
-        s.onload = () => { try { scheduleResizeClock(); } catch (_) {} };
+        s.onload = () => {};
         document.head.appendChild(s);
         flipClockAssetsRequested = true;
       } catch (e) { console.error(e); }
@@ -321,12 +327,12 @@
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = cssUrl;
-        link.onload = () => { try { scheduleResizeClock(); } catch (_) {} };
+        link.onload = () => {};
         document.head.appendChild(link);
         const s = document.createElement('script');
         s.src = jsUrl;
         s.async = true;
-        s.onload = () => { try { scheduleResizeClock(); } catch (_) {} };
+        s.onload = () => {};
         document.head.appendChild(s);
         flipClockAssetsRequested = true;
       } catch (e) { console.error(e); }
@@ -453,7 +459,6 @@
         });
         // Drive clock ourselves to avoid relying on internal timer
         updateDate();
-        scheduleResizeClock();
         const syncClock = () => {
           const now = updateClockTime();
           const msToNextSecond = 1000 - now.getMilliseconds();
@@ -477,7 +482,12 @@
       return now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
     }
 
-    function scheduleResizeClock() {
+    function scheduleResizeClock(opts) {
+      try { opts = opts || {}; } catch (_) { opts = {}; }
+      const force = !!(opts && opts.force);
+      if (suppressNonWindowResize && !inWindowResize && !force && initialClockLayoutDone) {
+        return;
+      }
       if (resizeClockFrame) {
         cancelAnimationFrame(resizeClockFrame);
       }
@@ -525,6 +535,7 @@
           }
           if (!clockResizeObserver && typeof ResizeObserver !== 'undefined') {
             clockResizeObserver = new ResizeObserver(() => {
+              if (!inWindowResize) return;
               applyClockCap(clockObservedEl);
             });
           }
@@ -593,7 +604,7 @@
           scheduleLeftStackScale();
         }
         if (showClock) {
-          scheduleResizeClock();
+          scheduleResizeClock({ force: true });
         }
       } catch (e) { /* noop */ }
     }
@@ -608,6 +619,16 @@
         } else {
           dateEl.style.fontSize = '';
         }
+      } catch (_) {}
+    }
+
+    function applyClockVertical() {
+      try {
+        const cw = document.getElementById('clock-wrapper');
+        if (!cw) return;
+        const v = (typeof clockVerticalPercent === 'number' && isFinite(clockVerticalPercent)) ? clockVerticalPercent : 50;
+        const vv = Math.max(0, Math.min(100, Math.round(v)));
+        cw.style.top = vv + '%';
       } catch (_) {}
     }
 
@@ -720,6 +741,9 @@
         if (rect.width && targetWidth) {
           const newFontPx = Math.max(8, Math.min(400, fontPx * (targetWidth / rect.width)));
           clockEl.style.fontSize = `${newFontPx}px`;
+          clockEl.style.width = `${targetWidth}px`;
+          clockEl.style.minWidth = `${targetWidth}px`;
+          clockEl.style.maxWidth = `${targetWidth}px`;
         }
       } catch (_) {}
       // Size the date based on targetWidth, unless backend override is set
@@ -738,6 +762,7 @@
       } catch (_) {}
       // Re-scale left stack now that clock size is final
       try { scheduleLeftStackScale(); } catch (_) {}
+      initialClockLayoutDone = true;
     }
 
     function updateDate() {
@@ -789,13 +814,14 @@
           if (v !== forecastWidthPercent) {
             forecastWidthPercent = v;
             scheduleLeftStackScale();
+            scheduleResizeClock({ force: true });
           }
         }
         if (typeof data.clockWidthPercent === 'number' && isFinite(data.clockWidthPercent)) {
           const v = Math.max(5, Math.min(100, Math.round(data.clockWidthPercent)));
           if (v !== clockWidthPercent) {
             clockWidthPercent = v;
-            scheduleResizeClock();
+            scheduleResizeClock({ force: true });
           }
         }
         // Read optional date font size (px); 0 keeps CSS default
@@ -804,6 +830,7 @@
           if (v !== dateFontSizePx) {
             dateFontSizePx = v;
             applyDateFontSize();
+            scheduleResizeClock({ force: true });
           }
         }
         // Read optional date scale factor (1..5); used when no px override
@@ -811,7 +838,16 @@
           const v = Math.max(1, Math.min(5, Math.round(data.dateScaleFactor)));
           if (v !== dateScaleFactor) {
             dateScaleFactor = v;
-            scheduleResizeClock();
+            scheduleResizeClock({ force: true });
+          }
+        }
+
+        if (typeof data.clockVerticalPercent === 'number' && isFinite(data.clockVerticalPercent)) {
+          const v = Math.max(0, Math.min(100, Math.round(data.clockVerticalPercent)));
+          if (v !== clockVerticalPercent) {
+            clockVerticalPercent = v;
+            applyClockVertical();
+            scheduleResizeClock({ force: true });
           }
         }
 
@@ -846,7 +882,7 @@
             if (data.temperature) {
               updateTemperature(data.temperature);
             }
-            scheduleResizeClock();
+            scheduleResizeClock({ force: true });
             scheduleLeftStackScale();
             break;
           case 'temperature':
@@ -1109,6 +1145,9 @@
         const el = clockContainer ? (clockContainer.classList.contains('flip-clock') ? clockContainer : clockContainer.querySelector('.flip-clock')) : null;
         if (el && el.style) {
           el.style.removeProperty('font-size');
+          el.style.removeProperty('width');
+          el.style.removeProperty('min-width');
+          el.style.removeProperty('max-width');
         }
       } catch (_) {}
       if (resizeDebounceTimer) {
@@ -1116,15 +1155,18 @@
       }
       resizeDebounceTimer = setTimeout(() => {
         resizeDebounceTimer = null;
+        inWindowResize = true;
         scheduleResizeClock();
+        inWindowResize = false;
       }, 150);
     });
 
     document.addEventListener('DOMContentLoaded', () => {
       requestInitial();
       initClock();
+      applyClockVertical();
       scheduleLeftStackScale();
-      scheduleResizeClock();
+      scheduleResizeClock({ force: true });
     });
   </script>
 </head>
