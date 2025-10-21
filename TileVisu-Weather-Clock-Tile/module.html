@@ -208,9 +208,12 @@
     }
     #clock .flip-clock {
       margin: 0;
-      width: auto;
-      /* Base size from backend percent; JS will still cap as fallback */
-      font-size: clamp(10px, calc(var(--clock-pct, 70vw) / 18.5), 200px);
+      /* Persist exact sizing via CSS variables set on #clock container */
+      width: var(--clock-width-px, auto);
+      min-width: var(--clock-width-px, auto);
+      max-width: var(--clock-width-px, none);
+      /* Base size from backend percent; can be overridden by --clock-font-px */
+      font-size: var(--clock-font-px, clamp(10px, calc(var(--clock-pct, 70vw) / 18.5), 200px));
       font-variant-numeric: tabular-nums;
       font-feature-settings: 'tnum' 1;
     }
@@ -273,6 +276,12 @@
     let suppressNonWindowResize = true;
     let inWindowResize = false;
     let initialClockLayoutDone = false;
+    // Track last visibility flags to avoid unnecessary resizes on frequent payloads
+    let lastShowWeather = null;
+    let lastShowClock = null;
+    let lastShowDate = null;
+    let lastShowForecast = null;
+    
 
     function injectStyle(targetId, base64) {
       const styleEl = document.getElementById(targetId);
@@ -471,9 +480,10 @@
     }
 
     function updateClockTime() {
-      if (!flipClock) return new Date();
       const now = new Date();
-      try { flipClock.value = now; } catch (_) {}
+      if (flipClock) {
+        try { flipClock.value = now; } catch (_) {}
+      }
       return now;
     }
 
@@ -510,7 +520,11 @@
           const computed = window.getComputedStyle(clockEl);
           const fontPx = parseFloat(computed.fontSize) || 16;
           const newFontPx = Math.max(8, Math.min(400, fontPx * (targetWidth / rect.width)));
-          clockEl.style.fontSize = `${newFontPx}px`;
+          const clockContainer = document.getElementById('clock');
+          if (clockContainer) {
+            clockContainer.style.setProperty('--clock-font-px', `${newFontPx}px`);
+            clockContainer.style.setProperty('--clock-width-px', `${targetWidth}px`);
+          }
         }
       } catch (_) {}
     }
@@ -599,12 +613,6 @@
         if (temperatureEl) {
           const sf = (typeof showForecast === 'boolean') ? showForecast : true;
           temperatureEl.style.display = sf ? '' : 'none';
-        }
-        if (showWeather) {
-          scheduleLeftStackScale();
-        }
-        if (showClock) {
-          scheduleResizeClock({ force: true });
         }
       } catch (e) { /* noop */ }
     }
@@ -740,10 +748,16 @@
         const fontPx = parseFloat(computed.fontSize) || 16;
         if (rect.width && targetWidth) {
           const newFontPx = Math.max(8, Math.min(400, fontPx * (targetWidth / rect.width)));
-          clockEl.style.fontSize = `${newFontPx}px`;
-          clockEl.style.width = `${targetWidth}px`;
-          clockEl.style.minWidth = `${targetWidth}px`;
-          clockEl.style.maxWidth = `${targetWidth}px`;
+          // Clear any prior inline styles on the flip element; rely on container CSS variables
+          try {
+            clockEl.style.fontSize = '';
+            clockEl.style.width = '';
+            clockEl.style.minWidth = '';
+            clockEl.style.maxWidth = '';
+          } catch (_) {}
+          // Persist sizing to #clock container so replacements inherit immediately
+          clockContainer.style.setProperty('--clock-font-px', `${newFontPx}px`);
+          clockContainer.style.setProperty('--clock-width-px', `${targetWidth}px`);
         }
       } catch (_) {}
       // Size the date based on targetWidth, unless backend override is set
@@ -801,11 +815,30 @@
 
         // Toggle visibility if flags are present
         if (typeof data.showWeather === 'boolean' || typeof data.showClock === 'boolean' || typeof data.showDate === 'boolean' || typeof data.showForecast === 'boolean') {
-          const sw = typeof data.showWeather === 'boolean' ? data.showWeather : true;
-          const sc = typeof data.showClock === 'boolean' ? data.showClock : true;
-          const sd = typeof data.showDate === 'boolean' ? data.showDate : true;
-          const sf = typeof data.showForecast === 'boolean' ? data.showForecast : true;
+          const sw = (typeof data.showWeather === 'boolean') ? data.showWeather : (lastShowWeather === null ? true : lastShowWeather);
+          const sc = (typeof data.showClock === 'boolean') ? data.showClock : (lastShowClock === null ? true : lastShowClock);
+          const sd = (typeof data.showDate === 'boolean') ? data.showDate : (lastShowDate === null ? true : lastShowDate);
+          const sf = (typeof data.showForecast === 'boolean') ? data.showForecast : (lastShowForecast === null ? true : lastShowForecast);
+          const prevSW = lastShowWeather;
+          const prevSC = lastShowClock;
+          const prevSD = lastShowDate;
+          const prevSF = lastShowForecast;
           applyVisibility(!!sw, !!sc, !!sd, !!sf);
+          lastShowWeather = !!sw;
+          lastShowClock = !!sc;
+          lastShowDate = !!sd;
+          lastShowForecast = !!sf;
+          const flagsChanged = (prevSW === null || prevSC === null || prevSD === null || prevSF === null)
+            ? true
+            : (prevSW !== lastShowWeather || prevSC !== lastShowClock || prevSD !== lastShowDate || prevSF !== lastShowForecast);
+          if (flagsChanged) {
+            if (lastShowClock) {
+              scheduleResizeClock({ force: true });
+            }
+            if (lastShowWeather) {
+              scheduleLeftStackScale();
+            }
+          }
         }
 
         // Read optional width configuration (clamp to 5..100)
@@ -882,7 +915,12 @@
             if (data.temperature) {
               updateTemperature(data.temperature);
             }
-            scheduleResizeClock({ force: true });
+            // Only force resize on initial layout; after that, avoid periodic forced resizes
+            if (!initialClockLayoutDone) {
+              scheduleResizeClock({ force: true });
+            } else {
+              scheduleResizeClock();
+            }
             scheduleLeftStackScale();
             break;
           case 'temperature':
