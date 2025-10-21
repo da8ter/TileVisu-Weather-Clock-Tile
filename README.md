@@ -28,19 +28,14 @@ Im Formular stehen folgende Einstellungen zur Verfügung:
 - **Forecast width (%)**: Breite der Vorhersage in Prozent.
 - **Clock width (%)**: Breite der Uhr in Prozent.
 - **Date font size (px, 0 = auto)**: Feste Schriftgröße des Datums in Pixeln. 0 = Automatik.
-- **Date size factor (1–5)**: Faktor für die automatische Datumsschrift. Endgültig: `(Uhr-Schriftgröße / 3) × Faktor`.
+- **Date size factor (1–5)**: Faktor für die automatische Datumsschrift.
 
 Hinweis: Wenn „Show weather“ deaktiviert ist, bleibt der Hintergrund leer (kein Fehlerhinweis), und es werden keine Temperatur-/Vorhersage-Updates übertragen. Wenn ein „Custom media image“ (Bild) gesetzt ist, wird dieses genutzt, sobald die Wetteranzeige aktiv ist.
 
 ## Funktionsweise (Kurz)
 - **Uhrbreite** (`Clock width (%)`): Die FlipClock wird auf die eingestellte Fensterbreite skaliert. Nach dem Resize wird die Schriftgröße der Uhr so gesetzt, dass die Zielbreite exakt getroffen wird.
-- **Datum**: Wenn `Date font size (px) = 0`, wird die Datumsschrift automatisch aus der Uhrschrift berechnet: `(Uhr-Schrift / 3) × Date size factor`. Das Datum bleibt einzeilig (`white-space: nowrap`).
-- **Left-Stack (Temperatur + Forecast)**: Der Bereich links wächst/ schrumpft horizontal bis maximal zur Backend-Breite und bis kurz vor die Uhr. Kollision wird relativ zu `#temperature` gemessen; Transform-Origin ist unten links. Der Abstand zur Uhr ist konfiguriert (interner `gap`).
-
-## Neu in 1.0.3
-- Automatische Datumsskalierung relativ zur Uhr via neuem Parameter **Date size factor (1–5)**.
-- Verhindert, dass das Datum unten abgeschnitten wird (kein `overflow: hidden`).
-- Left-Stack skaliert jetzt auch nach oben und orientiert sich an der tatsächlichen Uhrposition (horizontale Kollision, kein vertikaler Overlap).
+- **Datum**: Wenn `Date font size (px) = 0`, wird die Datumsschrift automatisch aus der Uhrschrift berechnet. Das Datum bleibt einzeilig.
+- **Temperatur + Forecast**: Der Bereich links wächst/ schrumpft horizontal bis maximal zur im Backend eingestellten Breite und bis kurz vor die Uhr.
 
 
 Viel Spaß mit der TileVisu Wetter Uhr!
