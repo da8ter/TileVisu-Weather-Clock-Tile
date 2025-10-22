@@ -264,9 +264,6 @@
     let resizeClockFrame = null;
     let leftStackScaleFrame = null;
     let resizeDebounceTimer = null;
-    let clockResizeObserver = null;
-    let clockMutationObserver = null;
-    let clockObservedEl = null;
     // Backend-configurable percentages (defaults)
     let forecastWidthPercent = 25; // % of window width
     let clockWidthPercent = 70;    // % of window width
@@ -507,73 +504,8 @@
       });
     }
 
-    // Cap the clock width by adjusting inline font-size only if it exceeds the target
-    function applyClockCap(clockEl) {
-      try {
-        if (!clockEl) return;
-        const pct = (typeof clockWidthPercent === 'number' && isFinite(clockWidthPercent))
-          ? Math.max(5, Math.min(100, clockWidthPercent))
-          : 70;
-        const targetWidth = Math.max(0, Math.floor(window.innerWidth * (pct / 100)));
-        const rect = clockEl.getBoundingClientRect();
-        if (rect.width && targetWidth && rect.width > targetWidth + 1) {
-          const computed = window.getComputedStyle(clockEl);
-          const fontPx = parseFloat(computed.fontSize) || 16;
-          const newFontPx = Math.max(8, Math.min(400, fontPx * (targetWidth / rect.width)));
-          const clockContainer = document.getElementById('clock');
-          if (clockContainer) {
-            clockContainer.style.setProperty('--clock-font-px', `${newFontPx}px`);
-            clockContainer.style.setProperty('--clock-width-px', `${targetWidth}px`);
-          }
-        }
-      } catch (_) {}
-    }
-
-    // Attach observers to the current .flip-clock element and keep them attached if DOM changes
-    function updateClockObservers() {
-      try {
-        const clockContainer = document.getElementById('clock');
-        if (!clockContainer) return;
-        let el = null;
-        if (clockContainer.classList.contains('flip-clock')) {
-          el = clockContainer;
-        } else {
-          el = clockContainer.querySelector('.flip-clock');
-        }
-        if (!el) return;
-
-        // If observed element changed, re-attach the ResizeObserver
-        if (el !== clockObservedEl) {
-          if (clockResizeObserver && clockObservedEl) {
-            try { clockResizeObserver.unobserve(clockObservedEl); } catch (_) {}
-          }
-          if (!clockResizeObserver && typeof ResizeObserver !== 'undefined') {
-            clockResizeObserver = new ResizeObserver(() => {
-              if (!inWindowResize) return;
-              applyClockCap(clockObservedEl);
-            });
-          }
-          if (clockResizeObserver) {
-            clockResizeObserver.observe(el);
-            clockObservedEl = el;
-          }
-          // Initial cap for the new element
-          applyClockCap(el);
-        }
-
-        // Setup a MutationObserver once to catch DOM replacement under #clock
-        if (!clockMutationObserver && typeof MutationObserver !== 'undefined') {
-          clockMutationObserver = new MutationObserver(() => {
-            updateClockObservers();
-          });
-          clockMutationObserver.observe(clockContainer, { childList: true, subtree: true });
-        }
-      } catch (_) {}
-    }
-
-    function ensureClockObserver() {
-      updateClockObservers();
-    }
+    // Observers removed: sizing persists via CSS variables on #clock container
+    // Resize only on window resize or backend changes
 
     function scheduleLeftStackScale() {
       if (leftStackScaleFrame) {
@@ -739,8 +671,7 @@
       // Calculate target width once for both clock and date sizing
       const targetWidth = Math.max(0, Math.floor(window.innerWidth * (pct / 100)));
 
-      // Install observer to cap width on any post-layout changes
-      ensureClockObserver();
+      // Observers disabled: CSS variables persist sizing
       // Lock exact width now: set inline font-size so width == target
       try {
         const rect = clockEl.getBoundingClientRect();
