@@ -216,6 +216,7 @@
       font-size: var(--clock-font-px, clamp(10px, calc(var(--clock-pct, 70vw) / 18.5), 200px));
       font-variant-numeric: tabular-nums;
       font-feature-settings: 'tnum' 1;
+      overflow: visible;
     }
     #clock-wrapper .flip-clock {
       float: none !important;
@@ -228,6 +229,22 @@
     }
     #clock .flip-clock-divider .flip-clock-label {
       display: none;
+    }
+    #clock .flip-clock-divider {
+      position: relative;
+      z-index: 3;
+      display: inline-block;
+      min-width: 0.6em;
+      /* Keep minimum horizontal gap to hours/minutes */
+      margin-left: clamp(2px, 0.15em, 8px);
+      margin-right: clamp(2px, 0.15em, 8px);
+      /* Do not shrink in flex layout */
+      flex: 0 0 auto;
+      align-self: center;
+    }
+    #clock .flip-clock-divider .flip-clock-dot {
+      opacity: 1 !important;
+      visibility: visible !important;
     }
     #date {
       /* Cap size while remaining responsive; backend can override via dateFontSizePx */
@@ -278,6 +295,9 @@
     let lastShowClock = null;
     let lastShowDate = null;
     let lastShowForecast = null;
+    let webhookToken = "";
+    let showSeconds = false;
+    let lastShowSeconds = null;
     
 
     function injectStyle(targetId, base64) {
@@ -300,11 +320,20 @@
     function ensureFlipClockAssetsFromUrl(imageUrl, ts) {
       try {
         if (flipClockAssetsRequested) return;
-        const base = (typeof imageUrl === 'string' ? imageUrl : '').split('?')[0];
+        const raw = (typeof imageUrl === 'string') ? imageUrl : '';
+        if (!raw) return;
+        let base = raw.split('?')[0] || '';
+        let token = webhookToken || '';
+        try {
+          const u = new URL(raw, window.location.origin);
+          base = u.pathname || base || raw;
+          if (!token) token = u.searchParams.get('token') || '';
+        } catch (_) {}
         if (!base) return;
         const v = (typeof ts === 'number' && isFinite(ts)) ? ts : Date.now();
-        const cssUrl = base + '?asset=flipclock.min.css&v=' + v;
-        const jsUrl  = base + '?asset=flipclock.min.js&v=' + v;
+        const tpart = token ? ('token=' + encodeURIComponent(token) + '&') : '';
+        const cssUrl = base + '?' + tpart + 'asset=flipclock.min.css&v=' + v;
+        const jsUrl  = base + '?' + tpart + 'asset=flipclock.min.js&v=' + v;
         // CSS
         const link = document.createElement('link');
         link.rel = 'stylesheet';
@@ -328,8 +357,10 @@
         const clean = base.split('?')[0];
         if (!clean) return;
         const v = (typeof ts === 'number' && isFinite(ts)) ? ts : Date.now();
-        const cssUrl = clean + '?asset=flipclock.min.css&v=' + v;
-        const jsUrl  = clean + '?asset=flipclock.min.js&v=' + v;
+        const token = webhookToken || '';
+        const tpart = token ? ('token=' + encodeURIComponent(token) + '&') : '';
+        const cssUrl = clean + '?' + tpart + 'asset=flipclock.min.css&v=' + v;
+        const jsUrl  = clean + '?' + tpart + 'asset=flipclock.min.js&v=' + v;
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = cssUrl;
@@ -461,7 +492,7 @@
         // In v0.10.8, pass the face as a string key ("TwentyFourHourClock")
         flipClock = new window.FlipClock(el, new Date(), {
           face: 'TwentyFourHourClock',
-          showSeconds: false
+          showSeconds: !!showSeconds
         });
         // Drive clock ourselves to avoid relying on internal timer
         updateDate();
@@ -474,6 +505,21 @@
       } catch (e) {
         console.error(e);
       }
+    }
+
+    function destroyClock() {
+      try { if (clockSyncTimer) { clearTimeout(clockSyncTimer); } } catch (_) {}
+      clockSyncTimer = null;
+      flipClock = null;
+      try {
+        const el = document.getElementById('clock');
+        if (el) { el.innerHTML = ''; }
+      } catch (_) {}
+    }
+
+    function recreateClock() {
+      destroyClock();
+      initClock();
     }
 
     function updateClockTime() {
@@ -744,21 +790,35 @@
           }
         }
 
+        // Capture token early for subsequent asset loads
+        try {
+          if (data && typeof data.token === 'string' && data.token.trim()) {
+            webhookToken = data.token.trim();
+          }
+        } catch (_) {}
+
         // Toggle visibility if flags are present
-        if (typeof data.showWeather === 'boolean' || typeof data.showClock === 'boolean' || typeof data.showDate === 'boolean' || typeof data.showForecast === 'boolean') {
+        if (typeof data.showWeather === 'boolean' || typeof data.showClock === 'boolean' || typeof data.showDate === 'boolean' || typeof data.showForecast === 'boolean' || typeof data.showSeconds === 'boolean') {
           const sw = (typeof data.showWeather === 'boolean') ? data.showWeather : (lastShowWeather === null ? true : lastShowWeather);
           const sc = (typeof data.showClock === 'boolean') ? data.showClock : (lastShowClock === null ? true : lastShowClock);
           const sd = (typeof data.showDate === 'boolean') ? data.showDate : (lastShowDate === null ? true : lastShowDate);
           const sf = (typeof data.showForecast === 'boolean') ? data.showForecast : (lastShowForecast === null ? true : lastShowForecast);
+          const ss = (typeof data.showSeconds === 'boolean') ? data.showSeconds : (lastShowSeconds === null ? false : lastShowSeconds);
           const prevSW = lastShowWeather;
           const prevSC = lastShowClock;
           const prevSD = lastShowDate;
           const prevSF = lastShowForecast;
+          const prevSS = lastShowSeconds;
           applyVisibility(!!sw, !!sc, !!sd, !!sf);
           lastShowWeather = !!sw;
           lastShowClock = !!sc;
           lastShowDate = !!sd;
           lastShowForecast = !!sf;
+          if (prevSS === null || prevSS !== !!ss) {
+            showSeconds = !!ss;
+            lastShowSeconds = !!ss;
+            recreateClock();
+          }
           const flagsChanged = (prevSW === null || prevSC === null || prevSD === null || prevSF === null)
             ? true
             : (prevSW !== lastShowWeather || prevSC !== lastShowClock || prevSD !== lastShowDate || prevSF !== lastShowForecast);
@@ -818,6 +878,11 @@
         switch (data.type) {
           case 'image':
             {
+              try {
+                const code = (typeof data.wmoCode !== 'undefined') ? data.wmoCode : null;
+                const imgName = (typeof data.imageName === 'string') ? data.imageName : '';
+                console.debug('TileVisu Weather: WMO code =', code, 'Bildname =', imgName);
+              } catch (e) {}
               const sw = (typeof data.showWeather === 'boolean') ? data.showWeather : true;
               const url = (typeof data.url === 'string') ? data.url.trim() : '';
               if (url) {

@@ -41,6 +41,11 @@
       "caption": "Show date"
     },
     {
+      "type": "CheckBox",
+      "name": "ShowSeconds",
+      "caption": "Show seconds"
+    },
+    {
       "type": "SelectMedia",
       "name": "CustomMediaID",
       "caption": "Custom media image"

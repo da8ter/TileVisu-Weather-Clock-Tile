@@ -25,6 +25,7 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterPropertyInteger('DateFontSizePx', 0);
         // Date scale factor (1..5), multiplies (clockFontPx / 3)
         $this->RegisterPropertyInteger('DateScaleFactor', 3);
+        $this->RegisterPropertyBoolean('ShowSeconds', false);
 
         // Register timers only in Create(); interval is set in ApplyChanges()
         $this->RegisterTimer('UpdateTimer', 3600000, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
@@ -34,6 +35,7 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterAttributeInteger('LastTemperatureVarID', 0);
         $this->RegisterAttributeString('LastSlug', '');
         $this->RegisterAttributeString('LastTimeOfDay', '');
+        $this->RegisterAttributeString('WebhookToken', '');
     }
 
     public function Destroy()
@@ -44,9 +46,127 @@ class TileVisuWeatherClockTile extends IPSModule
     
     protected function ProcessHookData()
     {
-        // Nicht mehr verwendet (keine Medien/WebHook-Auslieferung)
+        $baseDir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'wetterbilder';
+        $assetDir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'flipclock';
+
+        $tok = isset($_GET['token']) ? (string)$_GET['token'] : '';
+        if ($tok === '' || $tok !== $this->getWebhookToken()) {
+            http_response_code(403);
+            echo 'forbidden';
+            return;
+        }
+
+        if (isset($_GET['asset']) && is_string($_GET['asset'])) {
+            $allowed = ['flipclock.min.js', 'flipclock.min.css'];
+            $asset = basename($_GET['asset']);
+            if (in_array($asset, $allowed, true)) {
+                $path = rtrim($assetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $asset;
+                if (@is_file($path)) {
+                    if (substr($asset, -3) === '.js') {
+                        header('Content-Type: application/javascript; charset=utf-8');
+                    } elseif (substr($asset, -4) === '.css') {
+                        header('Content-Type: text/css; charset=utf-8');
+                    } else {
+                        header('Content-Type: application/octet-stream');
+                    }
+                    header('Cache-Control: public, max-age=86400');
+                    header('Pragma: cache');
+                    readfile($path);
+                    return;
+                }
+            }
+            http_response_code(404);
+            echo 'asset not found';
+            return;
+        }
+
+        $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
+        $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
+        $useCustom = (!$showWeather) && ($customMediaId > 0);
+        if (isset($_GET['custom'])) {
+            $useCustom = true;
+        }
+        if ($useCustom) {
+            $b64 = @IPS_GetMediaContent($customMediaId);
+            if (is_string($b64) && $b64 !== '') {
+                $bin = @base64_decode($b64, true);
+                if ($bin !== false && $bin !== '') {
+                    $mime = 'image/jpeg';
+                    if (strlen($bin) >= 12) {
+                        $h = substr($bin, 0, 12);
+                        if (strncmp($h, "\xFF\xD8\xFF", 3) === 0) {
+                            $mime = 'image/jpeg';
+                        } elseif (strncmp($h, "\x89PNG\x0D\x0A\x1A\x0A", 8) === 0) {
+                            $mime = 'image/png';
+                        } elseif (strncmp($h, 'GIF87a', 6) === 0 || strncmp($h, 'GIF89a', 6) === 0) {
+                            $mime = 'image/gif';
+                        } elseif (substr($h, 0, 4) === 'RIFF' && substr($h, 8, 4) === 'WEBP') {
+                            $mime = 'image/webp';
+                        }
+                    }
+                    header('Content-Type: ' . $mime);
+                    header('Cache-Control: public, max-age=86400');
+                    header('Content-Length: ' . strlen($bin));
+                    echo $bin;
+                    return;
+                }
+            }
+            http_response_code(404);
+            echo 'Kein Bild verfügbar';
+            return;
+        }
+
+        $name = '';
+        if (isset($_GET['name']) && is_string($_GET['name'])) {
+            $name = strtolower(trim($_GET['name']));
+        } else {
+            $slug = isset($_GET['slug']) ? strtolower(trim((string)$_GET['slug'])) : '';
+            $tod  = isset($_GET['tod'])  ? strtolower(trim((string)$_GET['tod']))  : '';
+            if ($slug !== '' && ($tod === 'day' || $tod === 'night')) {
+                $name = $slug . '-' . $tod;
+            }
+        }
+        if ($name === '') {
+            try {
+                $name = (string)$this->RequestAction('WebhookGetName', 0);
+            } catch (\Throwable $e) {
+                $name = '';
+            }
+        }
+        if (!is_string($name) || $name === '') {
+            http_response_code(404);
+            echo 'Kein Bild verfügbar';
+            return;
+        }
+
+        $exts = ['jpg','jpeg','png','webp'];
+        foreach ($exts as $ext) {
+            $basePath = rtrim($baseDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+            $candidates = [
+                $basePath . $name . '-min.' . $ext,
+                $basePath . $name . '.' . $ext,
+            ];
+            foreach ($candidates as $file) {
+                if (@is_file($file)) {
+                    $ct = 'image/jpeg';
+                    if ($ext === 'png') {
+                        $ct = 'image/png';
+                    } elseif ($ext === 'webp') {
+                        $ct = 'image/webp';
+                    }
+                    $bin = @file_get_contents($file);
+                    if ($bin !== false) {
+                        header('Content-Type: ' . $ct);
+                        header('Cache-Control: public, max-age=86400');
+                        header('Content-Length: ' . strlen($bin));
+                        echo $bin;
+                        return;
+                    }
+                }
+            }
+        }
         http_response_code(404);
-        echo 'Not supported';
+        echo 'Kein Bild verfügbar';
     }
 
     public function ApplyChanges()
@@ -63,6 +183,8 @@ class TileVisuWeatherClockTile extends IPSModule
 
         // WebHook registrieren (Bilderauslieferung über /hook/wetterbilder/<InstanceID>)
         $this->RegisterHook('/hook/wetterbilder/' . $this->InstanceID);
+
+        $this->getWebhookToken();
 
         $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
         $previousVarId = (int)$this->ReadAttributeInteger('LastTemperatureVarID');
@@ -144,7 +266,6 @@ class TileVisuWeatherClockTile extends IPSModule
      */
     private function RegisterHook(string $hookPath): void
     {
-        // WebHook Control Modul-ID
         $webhookModuleId = '{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}';
         $ids = @IPS_GetInstanceListByModuleID($webhookModuleId);
         if (!is_array($ids) || count($ids) === 0) {
@@ -153,10 +274,6 @@ class TileVisuWeatherClockTile extends IPSModule
         }
         $whId = $ids[0];
 
-        // Sicherstellen, dass das Script existiert
-        $scriptId = $this->ensureHookScript();
-
-        // Hooks laden und anpassen
         $hooks = @json_decode(IPS_GetProperty($whId, 'Hooks'), true);
         if (!is_array($hooks)) {
             $hooks = [];
@@ -164,7 +281,7 @@ class TileVisuWeatherClockTile extends IPSModule
         $found = false;
         foreach ($hooks as &$h) {
             if (isset($h['Hook']) && $h['Hook'] === $hookPath) {
-                $h['TargetID'] = $scriptId;
+                $h['TargetID'] = $this->InstanceID;
                 $found = true;
                 break;
             }
@@ -172,7 +289,7 @@ class TileVisuWeatherClockTile extends IPSModule
         if (!$found) {
             $hooks[] = [
                 'Hook' => $hookPath,
-                'TargetID' => $scriptId
+                'TargetID' => $this->InstanceID
             ];
         }
 
@@ -180,159 +297,18 @@ class TileVisuWeatherClockTile extends IPSModule
         IPS_ApplyChanges($whId);
     }
 
-    /**
-     * Erzeugt/aktualisiert das Hook-Script, das vom WebHook Control aufgerufen wird.
-     * Gibt die ScriptID zurück.
-     */
-    private function ensureHookScript(): int
+    private function getWebhookToken(): string
     {
-        $ident = 'HookScript';
-        $sid = @IPS_GetObjectIDByIdent($ident, $this->InstanceID);
-
-        $baseDir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'wetterbilder';
-        $assetDir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'flipclock';
-        $code = <<<'PHP'
-<?php
-if (isset($_IPS['SENDER']) && $_IPS['SENDER'] === 'WebHook') {
-    $iid = %d;
-    $baseDir = '%s';
-    $assetDir = '%s';
-
-    // Serve local assets (no CDN)
-    if (isset($_GET['asset']) && is_string($_GET['asset'])) {
-        $allowed = ['flipclock.min.js', 'flipclock.min.css'];
-        $asset = basename($_GET['asset']);
-        if (in_array($asset, $allowed, true)) {
-            $path = rtrim($assetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $asset;
-            if (@is_file($path)) {
-                if (substr($asset, -3) === '.js') {
-                    header('Content-Type: application/javascript; charset=utf-8');
-                } elseif (substr($asset, -4) === '.css') {
-                    header('Content-Type: text/css; charset=utf-8');
-                } else {
-                    header('Content-Type: application/octet-stream');
-                }
-                header('Cache-Control: public, max-age=86400');
-                header('Pragma: cache');
-                readfile($path);
-                return;
+        $token = (string)$this->ReadAttributeString('WebhookToken');
+        if ($token === '') {
+            try {
+                $token = bin2hex(random_bytes(16));
+            } catch (\Throwable $e) {
+                $token = bin2hex(openssl_random_pseudo_bytes(16));
             }
+            $this->WriteAttributeString('WebhookToken', $token);
         }
-        http_response_code(404);
-        echo 'asset not found';
-        return;
-    }
-
-    // Custom media override when weather is disabled or explicitly requested
-    $showWeatherRaw = @IPS_GetProperty($iid, 'ShowWeather');
-    $showWeather = false;
-    if (is_bool($showWeatherRaw)) {
-        $showWeather = $showWeatherRaw;
-    } elseif (is_string($showWeatherRaw)) {
-        $lr = strtolower(trim($showWeatherRaw));
-        $showWeather = ($lr === 'true' || $lr === '1');
-    } elseif (is_int($showWeatherRaw)) {
-        $showWeather = ($showWeatherRaw !== 0);
-    }
-    $customMediaId = (int)@IPS_GetProperty($iid, 'CustomMediaID');
-    $useCustom = (!$showWeather) && ($customMediaId > 0);
-    if (isset($_GET['custom'])) { $useCustom = true; }
-    if ($useCustom) {
-        $b64 = @IPS_GetMediaContent($customMediaId);
-        if (is_string($b64) && $b64 !== '') {
-            // Try detecting content type from header
-            $mime = 'image/jpeg';
-            $bin = @base64_decode($b64, true);
-            if ($bin !== false && strlen($bin) >= 12) {
-                $h = substr($bin, 0, 12);
-                if (strncmp($h, "\xFF\xD8\xFF", 3) === 0) {
-                    $mime = 'image/jpeg';
-                } elseif (strncmp($h, "\x89PNG\x0D\x0A\x1A\x0A", 8) === 0) {
-                    $mime = 'image/png';
-                } elseif (strncmp($h, 'GIF87a', 6) === 0 || strncmp($h, 'GIF89a', 6) === 0) {
-                    $mime = 'image/gif';
-                } elseif (substr($h, 0, 4) === 'RIFF' && substr($h, 8, 4) === 'WEBP') {
-                    $mime = 'image/webp';
-                }
-            }
-            $dataUri = 'data:' . $mime . ';base64,' . $b64;
-            header('Content-Type: application/json');
-            header('Cache-Control: no-cache, must-revalidate');
-            header('Pragma: no-cache');
-            echo json_encode(['dataUri' => $dataUri, 'name' => 'custom-media', 'ext' => '', 'ts' => time()]);
-            return;
-        }
-        // do not fallback to weather images when custom is requested or weather is disabled
-        http_response_code(404);
-        header('Content-Type: application/json');
-        echo json_encode(['dataUri' => '', 'name' => 'custom-media', 'ext' => '', 'ts' => time()]);
-        return;
-    }
-
-    // Determiniere Name: direkt via ?name=..., oder aus ?slug= & ?tod=, sonst vom Modul
-    $name = '';
-    if (isset($_GET['name']) && is_string($_GET['name'])) {
-        $name = strtolower(trim($_GET['name']));
-    } else {
-        $slug = isset($_GET['slug']) ? strtolower(trim((string)$_GET['slug'])) : '';
-        $tod  = isset($_GET['tod'])  ? strtolower(trim((string)$_GET['tod']))  : '';
-        if ($slug !== '' && ($tod === 'day' || $tod === 'night')) {
-            $name = $slug . '-' . $tod;
-        }
-    }
-    if ($name === '') {
-        $name = IPS_RequestAction($iid, 'WebhookGetName', 0);
-    }
-    if (!is_string($name) || $name === '') {
-        http_response_code(404);
-        echo 'Kein Bild verfügbar';
-        return;
-    }
-
-    // Prüfe die möglichen Endungen im lokalen Verzeichnis und liefere das erste gefundene Bild aus
-    $exts = ['jpg','jpeg','png','webp'];
-    foreach ($exts as $ext) {
-        $basePath = rtrim($baseDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
-        $candidates = [
-            $basePath . $name . '-min.' . $ext,
-            $basePath . $name . '.' . $ext,
-        ];
-        foreach ($candidates as $file) {
-            if (@is_file($file)) {
-                $ct = 'image/jpeg';
-                if ($ext === 'png') $ct = 'image/png';
-                elseif ($ext === 'webp') $ct = 'image/webp';
-                $bin = @file_get_contents($file);
-                if ($bin !== false) {
-                    $b64 = base64_encode($bin);
-                    $dataUri = 'data:' . $ct . ';base64,' . $b64;
-                    header('Content-Type: application/json');
-                    header('Cache-Control: no-cache, must-revalidate');
-                    header('Pragma: no-cache');
-                    echo json_encode(['dataUri' => $dataUri, 'name' => $name, 'ext' => $ext, 'ts' => time()]);
-                    return;
-                }
-            }
-        }
-    }
-    http_response_code(404);
-    echo 'Kein Bild verfügbar';
-}
-PHP;
-        $code = sprintf($code, (int)$this->InstanceID, addslashes($baseDir), addslashes($assetDir));
-
-        if ($sid && @IPS_ObjectExists($sid)) {
-            IPS_SetScriptContent($sid, $code);
-            return $sid;
-        }
-
-        $sid = IPS_CreateScript(0); // 0 = PHP Script
-        IPS_SetName($sid, 'Wetterbilder WebHook');
-        IPS_SetParent($sid, $this->InstanceID);
-        IPS_SetIdent($sid, $ident);
-        IPS_SetHidden($sid, true);
-        IPS_SetScriptContent($sid, $code);
-        return $sid;
+        return $token;
     }
     
 
@@ -366,13 +342,15 @@ PHP;
             'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
             'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
             'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
+            'showSeconds' => (bool)$this->ReadPropertyBoolean('ShowSeconds'),
             'assetBase'   => $assetBase,
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
             'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
             'dateScaleFactor'      => $ds,
-            'showForecast'         => $showForecast
+            'showForecast'         => $showForecast,
+            'token'                => $this->getWebhookToken()
         ];
     }
 
@@ -399,7 +377,7 @@ PHP;
         if (!$showWeather) {
             $url = '';
             if ($hasCustom) {
-                $url = '/hook/wetterbilder/' . $this->InstanceID . '?custom=1';
+                $url = '/hook/wetterbilder/' . $this->InstanceID . '?custom=1&token=' . rawurlencode($this->getWebhookToken());
             }
             $payload = [
                 'type'        => 'image',
@@ -407,18 +385,22 @@ PHP;
                 'slug'        => '',
                 'timeOfDay'   => '',
                 'ts'          => time(),
+                'wmoCode'     => null,
+                'imageName'   => '',
                 'temperature' => null,
                 'forecast'    => [],
                 'showWeather' => false,
                 'showClock'   => $showClock,
                 'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
+                'showSeconds' => (bool)$this->ReadPropertyBoolean('ShowSeconds'),
                 'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
                 'forecastWidthPercent' => $fw,
                 'clockWidthPercent'    => $cw,
                 'clockVerticalPercent' => $cv,
                 'dateFontSizePx'       => $df,
                 'dateScaleFactor'      => max(1, min(5, (int)$this->ReadPropertyInteger('DateScaleFactor'))),
-                'showForecast'         => false
+                'showForecast'         => false,
+                'token'                => $this->getWebhookToken()
             ];
             $this->UpdateVisualizationValue(json_encode($payload));
             return;
@@ -426,8 +408,10 @@ PHP;
 
         // If a custom media is configured and has content, prefer it as background even when weather is enabled
         if ($hasCustom) {
-            $url = '/hook/wetterbilder/' . $this->InstanceID . '?custom=1';
+            $url = '/hook/wetterbilder/' . $this->InstanceID . '?custom=1&token=' . rawurlencode($this->getWebhookToken());
             $payload = $this->buildVisualizationPayload($url, '', '');
+            $payload['wmoCode'] = null;
+            $payload['imageName'] = 'custom';
             $this->UpdateVisualizationValue(json_encode($payload));
             return;
         }
@@ -469,9 +453,11 @@ PHP;
         } else {
             $this->SendDebug('Image', 'Using background ' . $baseName, 0);
         }
-        $webhookUrl = '/hook/wetterbilder/' . $this->InstanceID . '?name=' . rawurlencode($baseName);
+        $webhookUrl = '/hook/wetterbilder/' . $this->InstanceID . '?name=' . rawurlencode($baseName) . '&token=' . rawurlencode($this->getWebhookToken());
 
         $payload = $this->buildVisualizationPayload($webhookUrl, $slug, $tod);
+        $payload['wmoCode'] = $wmoCode;
+        $payload['imageName'] = $baseName;
         $this->UpdateVisualizationValue(json_encode($payload));
     }
 
@@ -619,13 +605,15 @@ PHP;
             'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
             'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
             'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
+            'showSeconds' => (bool)$this->ReadPropertyBoolean('ShowSeconds'),
             'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
             'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
             'dateScaleFactor'      => $ds,
-            'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast')
+            'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast'),
+            'token'                => $this->getWebhookToken()
         ];
         $this->UpdateVisualizationValue(json_encode($payload));
     }
@@ -880,14 +868,16 @@ PHP;
         if (in_array($code, [2], true)) return $isDay ? 'sunny-intervals-day' : 'partly-cloudy-night';
         if (in_array($code, [3], true)) return 'thick-cloud-' . $dn;
         if (in_array($code, [45,48], true)) return 'fog-' . $dn; // or mist-
-        if (in_array($code, [51,53,55], true)) return 'drizzle-' . $dn;
+        if ($code === 51) return 'light-drizzle-' . $dn;
+        if ($code === 52) return 'moderate-drizzle-' . $dn;
+        if ($code === 53) return 'dense-drizzle-' . $dn;
         if (in_array($code, [56,57], true)) return 'sleet-' . $dn; // freezing drizzle
-        if ($code === 61) return 'light-rain-' . $dn;
+        if ($code === 61) return 'light-rain-shower' . $dn;
         if ($code === 63) return 'light-rain-' . $dn;
         if ($code === 65) return 'heavy-rain-' . $dn;
         if (in_array($code, [66,67], true)) return 'sleet-' . $dn; // freezing rain
         if ($code === 71) return 'light-snow-shower-' . $dn;
-        if ($code === 73) return 'heavy-snow-' . $dn;
+        if ($code === 73) return 'heavy-snow-shower' . $dn;
         if ($code === 75) return 'heavy-snow-' . $dn;
         if ($code === 77) return 'light-snow-shower-' . $dn; // snow grains
         if ($code === 80) return 'light-rain-shower-' . $dn;
@@ -1024,7 +1014,8 @@ PHP;
             'clockWidthPercent'    => $cw,
             'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
-            'showForecast'         => $showForecast
+            'showForecast'         => $showForecast,
+            'token'                => $this->getWebhookToken()
         ];
         $this->UpdateVisualizationValue(json_encode($payload));
     }
