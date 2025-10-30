@@ -32,6 +32,11 @@
     },
     {
       "type": "CheckBox",
+      "name": "UseAnimatedIcons",
+      "caption": "Use animated icons"
+    },
+    {
+      "type": "CheckBox",
       "name": "ShowClock",
       "caption": "Show clock"
     },
