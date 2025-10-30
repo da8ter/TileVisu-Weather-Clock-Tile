@@ -30,6 +30,7 @@
       background-repeat: no-repeat;
       isolation: isolate;
       z-index: 1001;
+      will-change: background-image;
     }
 
     #wrap::before {
@@ -73,9 +74,75 @@
       z-index: 1;
     }
 
+    /* Wrap-level overlays are disabled; overlays now live on .bg-layer */
+    #wrap::before,
+    #wrap::after {
+      content: none !important;
+    }
+
+    .bg-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #000;
+      background-size: cover;
+      background-position: center bottom;
+      background-repeat: no-repeat;
+      opacity: 0;
+      transition: opacity 250ms ease;
+      z-index: 0;
+      pointer-events: none;
+      will-change: opacity, background-image;
+    }
+    .bg-layer.is-active { opacity: 1; }
+
+    .bg-layer::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 35%;
+      background: inherit;
+      background-size: inherit;
+      background-position: inherit;
+      background-repeat: inherit;
+      pointer-events: none;
+      z-index: 1;
+      -webkit-filter: blur(5px);
+      filter: blur(5px);
+      -webkit-mask-image: -webkit-gradient(linear, left top, right top, from(#fff), to(rgba(255, 255, 255, 0)));
+      -webkit-mask-image: linear-gradient(to right, #fff, rgba(255, 255, 255, 0));
+      mask-image: linear-gradient(to right, #fff, rgba(255, 255, 255, 0));
+      -webkit-mask-size: 100% 100%;
+      mask-size: 100% 100%;
+      -webkit-mask-position: left center;
+      mask-position: left center;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      will-change: filter;
+      contain: paint;
+    }
+
+    .bg-layer::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 35%;
+      background: linear-gradient(in oklch to right, rgb(10 25 70 / 0.7), rgb(10 25 70 / 0));
+      pointer-events: none;
+      z-index: 1;
+    }
+
     /* Hide blur/gradient when weather is disabled */
     body.no-weather #wrap::before,
-    body.no-weather #wrap::after {
+    body.no-weather #wrap::after,
+    body.no-weather .bg-layer::before,
+    body.no-weather .bg-layer::after {
       content: none !important;
     }
 
@@ -396,53 +463,55 @@
     function setImage(url, slug, tod, ts) {
       const wrap = document.getElementById('wrap');
       if (!wrap) return;
-      const setBg = (finalUrl) => {
-        wrap.style.backgroundImage = `url('${finalUrl}')`;
-        wrap.setAttribute('data-image-info', ((slug || '') + ' ' + (tod || '')).trim());
-        updateDate();
-        document.body.classList.remove('show-error');
-      };
-      // Cache-Busting
+      // Cache-Busting helper
       const withTs = (u, t) => {
         const sep = u.includes('?') ? '&' : '?';
         return u + sep + 'v=' + (t || Date.now());
       };
-      if (url && typeof url === 'string' && url.trim() !== '') {
-        const u = withTs(url.trim(), ts);
-        fetch(u, { cache: 'no-store' })
-          .then((res) => {
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const ct = (res.headers.get('content-type') || '').toLowerCase();
-            if (ct.includes('application/json')) {
-              return res.json().then((j) => ({ kind: 'json', value: j }));
-            }
-            return res.blob().then((b) => ({ kind: 'blob', value: b }));
-          })
-          .then((payload) => {
-            if (!payload) throw new Error('Empty payload');
-            if (payload.kind === 'json') {
-              const j = payload.value || {};
-              const dataUri = j && typeof j.dataUri === 'string' ? j.dataUri : '';
-              if (dataUri.startsWith('data:')) {
-                setBg(dataUri);
-                return;
-              }
-              throw new Error('JSON ohne dataUri');
-            } else if (payload.kind === 'blob') {
-              const objURL = URL.createObjectURL(payload.value);
-              setBg(objURL);
-              return;
-            }
-            throw new Error('Unbekannte Antwort');
-          })
-          .catch(() => showError('Kein Bild verfügbar'));
+      const bgA = document.getElementById('bgA');
+      const bgB = document.getElementById('bgB');
+      if (!url || typeof url !== 'string' || url.trim() === '') {
+        showError('Kein Bild verfügbar');
         return;
       }
-      // Ohne URL -> Fehler anzeigen
-      showError('Kein Bild verfügbar');
+      const finalUrl = withTs(url.trim(), ts);
+      const active = (bgA && bgA.classList.contains('is-active')) ? bgA : bgB;
+      const next = active === bgA ? bgB : bgA;
+      if (!active || !next) {
+        // Fallback: set on wrap directly
+        wrap.style.backgroundImage = `url('${finalUrl}')`;
+        wrap.setAttribute('data-image-info', ((slug || '') + ' ' + (tod || '')).trim());
+        updateDate();
+        document.body.classList.remove('show-error');
+        return;
+      }
+      // Preload and crossfade
+      try {
+        const img = new Image();
+        img.onload = () => {
+          next.style.backgroundImage = `url('${finalUrl}')`;
+          next.classList.add('is-active');
+          active.classList.remove('is-active');
+          wrap.setAttribute('data-image-info', ((slug || '') + ' ' + (tod || '')).trim());
+          updateDate();
+          document.body.classList.remove('show-error');
+        };
+        img.onerror = () => showError('Kein Bild verfügbar');
+        img.src = finalUrl;
+      } catch (_) {
+        showError('Kein Bild verfügbar');
+      }
     }
 
     function clearImage() {
+      const bgA = document.getElementById('bgA');
+      const bgB = document.getElementById('bgB');
+      if (bgA && bgB) {
+        bgA.style.backgroundImage = 'none';
+        bgB.style.backgroundImage = 'none';
+        bgA.classList.add('is-active');
+        bgB.classList.remove('is-active');
+      }
       const wrap = document.getElementById('wrap');
       if (wrap) {
         wrap.style.backgroundImage = 'none';
@@ -1206,6 +1275,8 @@
 </head>
 <body>
   <div id="wrap">
+    <div id="bgA" class="bg-layer is-active"></div>
+    <div id="bgB" class="bg-layer"></div>
     <div id="left-stack">
       <div id="temperature">
         <span id="temperature-icon"></span>

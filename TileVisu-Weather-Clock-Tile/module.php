@@ -33,6 +33,7 @@ class TileVisuWeatherClockTile extends IPSModule
 
         // Runtime (Subscriptions)
         $this->RegisterAttributeInteger('LastTemperatureVarID', 0);
+        $this->RegisterAttributeInteger('LastCustomMediaID', 0);
         $this->RegisterAttributeString('LastSlug', '');
         $this->RegisterAttributeString('LastTimeOfDay', '');
         $this->RegisterAttributeString('WebhookToken', '');
@@ -189,6 +190,8 @@ class TileVisuWeatherClockTile extends IPSModule
         $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
         $previousVarId = (int)$this->ReadAttributeInteger('LastTemperatureVarID');
         $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
+        $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
+        $previousMediaId = (int)$this->ReadAttributeInteger('LastCustomMediaID');
 
         if ($previousVarId > 0 && $previousVarId !== $temperatureVarId) {
             @$this->UnregisterMessage($previousVarId, VM_UPDATE);
@@ -201,6 +204,19 @@ class TileVisuWeatherClockTile extends IPSModule
             $this->WriteAttributeInteger('LastTemperatureVarID', $temperatureVarId);
         } else {
             $this->WriteAttributeInteger('LastTemperatureVarID', 0);
+        }
+
+        if ($previousMediaId > 0 && $previousMediaId !== $customMediaId) {
+            @$this->UnregisterMessage($previousMediaId, MM_UPDATE);
+            $this->UnregisterReference($previousMediaId);
+        }
+
+        if ($customMediaId > 0 && function_exists('IPS_MediaExists') && @IPS_MediaExists($customMediaId)) {
+            $this->RegisterMessage($customMediaId, MM_UPDATE);
+            $this->RegisterReference($customMediaId);
+            $this->WriteAttributeInteger('LastCustomMediaID', $customMediaId);
+        } else {
+            $this->WriteAttributeInteger('LastCustomMediaID', 0);
         }
 
         // Set periodic timer interval: every 60 minutes (3600000 ms)
@@ -571,6 +587,12 @@ class TileVisuWeatherClockTile extends IPSModule
             $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
             if ($temperatureVarId > 0 && $SenderID === $temperatureVarId) {
                 $this->sendTemperatureUpdate();
+            }
+        }
+        if ($Message === MM_UPDATE) {
+            $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
+            if ($customMediaId > 0 && $SenderID === $customMediaId) {
+                $this->sendImageUpdate();
             }
         }
     }
