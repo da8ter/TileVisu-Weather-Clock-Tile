@@ -490,6 +490,33 @@ class TileVisuWeatherClockTile extends IPSModule
         return is_string($b64) && $b64 !== '';
     }
 
+    /**
+     * Sends a minimal payload to update only the custom background image without triggering
+     * any weather data refresh (temperature/forecast). Used on MM_UPDATE events.
+     */
+    private function sendCustomImageUpdate(): void
+    {
+        if (!method_exists($this, 'UpdateVisualizationValue')) {
+            return;
+        }
+        $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
+        if (!$this->mediaHasContent($customMediaId)) {
+            // No content available; do not force a weather update here
+            return;
+        }
+        $assetBase = '/hook/wetterbilder/' . $this->InstanceID;
+        $url = $assetBase . '?custom=1&token=' . rawurlencode($this->getWebhookToken());
+        $payload = [
+            'type'      => 'image',
+            'url'       => $url,
+            'slug'      => '',
+            'timeOfDay' => '',
+            'ts'        => time(),
+            'assetBase' => $assetBase
+        ];
+        $this->UpdateVisualizationValue(json_encode($payload));
+    }
+
     private function resolveExistingBackground(string $baseName, string $tod): string
     {
         $dir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'wetterbilder' . DIRECTORY_SEPARATOR;
@@ -593,7 +620,8 @@ class TileVisuWeatherClockTile extends IPSModule
         if ($Message === MM_UPDATE) {
             $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
             if ($customMediaId > 0 && $SenderID === $customMediaId) {
-                $this->sendImageUpdate();
+                // Only update the displayed custom image; do not refresh weather data here
+                $this->sendCustomImageUpdate();
             }
         }
     }
