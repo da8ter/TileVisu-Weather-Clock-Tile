@@ -14,6 +14,7 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterPropertyString('Location', '');
         $this->RegisterPropertyBoolean('ShowWeather', true);
         $this->RegisterPropertyBoolean('ShowForecast', true);
+        $this->RegisterPropertyBoolean('UseAnimatedIcons', false);
         $this->RegisterPropertyInteger('CustomMediaID', 0);
         $this->RegisterPropertyBoolean('ShowClock', true);
         $this->RegisterPropertyBoolean('ShowDate', true);
@@ -653,15 +654,25 @@ class TileVisuWeatherClockTile extends IPSModule
             $formatted = @GetValueFormatted($variableId);
             if (is_string($formatted)) {
                 $result['value'] = $formatted;
-                return $result;
             }
         }
 
-        // Fallback auf Open-Meteo aktuelle Temperatur
+        // Open-Meteo aktuelle Daten
         $data = $this->fetchOpenMeteo();
-        if (is_array($data) && isset($data['current']) && isset($data['current']['temperature_2m'])) {
-            $t = (float)$data['current']['temperature_2m'];
-            $result['value'] = $this->formatTemperatureValue($t);
+        if (is_array($data) && isset($data['current']) && is_array($data['current'])) {
+            if ($result['value'] === '' && isset($data['current']['temperature_2m'])) {
+                $t = (float)$data['current']['temperature_2m'];
+                $result['value'] = $this->formatTemperatureValue($t);
+            }
+            $code = isset($data['current']['weather_code']) ? (int)$data['current']['weather_code'] : 0;
+            $isDay = null;
+            if (isset($data['current']['is_day'])) {
+                $isDay = ((int)$data['current']['is_day'] === 1);
+            }
+            $uri = $this->getWUIconDataURI($code, $isDay);
+            if (is_string($uri) && $uri !== '') {
+                $result['iconUrl'] = $uri;
+            }
         }
 
         return $result;
@@ -681,6 +692,16 @@ class TileVisuWeatherClockTile extends IPSModule
         $tMax  = isset($daily['temperature_2m_max']) && is_array($daily['temperature_2m_max']) ? $daily['temperature_2m_max'] : [];
         $tMin  = isset($daily['temperature_2m_min']) && is_array($daily['temperature_2m_min']) ? $daily['temperature_2m_min'] : [];
 
+        // Determine current day/night for icon variant
+        $isDayNow = null;
+        if (isset($data['current']) && is_array($data['current']) && isset($data['current']['is_day'])) {
+            $isDayNow = ((int)$data['current']['is_day'] === 1);
+        }
+        if ($isDayNow === null) {
+            $h = (int)date('G');
+            $isDayNow = ($h >= 6 && $h < 20);
+        }
+
         $count = min(4, count($times), count($codes), count($tMax), count($tMin));
         for ($i = 0; $i < $count; $i++) {
             $date = (string)($times[$i] ?? '');
@@ -688,9 +709,8 @@ class TileVisuWeatherClockTile extends IPSModule
             $max   = is_numeric($tMax[$i] ?? null) ? (int)round($tMax[$i]) : null;
             $min   = is_numeric($tMin[$i] ?? null) ? (int)round($tMin[$i]) : null;
             $code  = (int)($codes[$i] ?? 0);
-            // Use WU icon set (assume day icons for daily forecast)
-            $wuCode = $this->mapWMOToWUCode($code, true);
-            $iconUrl = $this->getWUIconDataURI($wuCode);
+            // Use OpenMeteo WMO code directly for icon filename with current day/night variant
+            $iconUrl = $this->getWUIconDataURI($code, $isDayNow);
             $out[] = [
                 'label' => $label,
                 'max' => $max,
@@ -703,40 +723,7 @@ class TileVisuWeatherClockTile extends IPSModule
         return $out;
     }
 
-    private function mapWMOToWUCode(int $code, bool $isDay): int
-    {
-        switch ($code) {
-            case 0:  return $isDay ? 32 : 31; // sunny / clear night
-            case 1:  return $isDay ? 34 : 33; // fair
-            case 2:  return $isDay ? 30 : 29; // partly cloudy
-            case 3:  return 26;               // cloudy
-            case 45:
-            case 48: return 20;               // fog
-            case 51:
-            case 53:
-            case 55: return 9;                // drizzle
-            case 56:
-            case 57: return 8;                // freezing drizzle
-            case 61:
-            case 63: return 11;               // showers/light rain
-            case 65: return 12;               // heavy rain/showers
-            case 66:
-            case 67: return 10;               // freezing rain
-            case 71: return 14;               // light snow showers
-            case 73: return 16;               // snow
-            case 75: return 41;               // heavy snow
-            case 77: return 13;               // snow flurries
-            case 80:
-            case 81: return 11;               // rain showers
-            case 82: return 12;               // heavy/violent rain showers
-            case 85: return 14;               // snow showers slight
-            case 86: return 46;               // snow showers heavy
-            case 95: return 4;                // thunderstorm
-            case 96:
-            case 99: return 45;               // thundershowers (hail)
-            default: return 26;               // cloudy fallback
-        }
-    }
+    
 
     private function fetchOpenMeteo(): ?array
     {
@@ -988,21 +975,154 @@ class TileVisuWeatherClockTile extends IPSModule
         return (string)round($t) . "°C";
     }
 
-    private function getWUIconDataURI(int $code): string
+    private function getWUIconDataURI(int $code, ?bool $isDay = null): string
     {
-        $dir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'icons' . DIRECTORY_SEPARATOR;
-        $file = $dir . $code . '.png';
-        if (!is_file($file)) {
-            $file = $dir . 'na.png';
-            if (!is_file($file)) {
+        $root = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'icons' . DIRECTORY_SEPARATOR;
+        $useAnimated = (bool)$this->ReadPropertyBoolean('UseAnimatedIcons');
+        $dirs = [$useAnimated ? 'animated' : 'static'];
+        $exts = ['webp', 'gif', 'png', 'svg'];
+
+        $mimeFor = function(string $ext): string {
+            switch (strtolower($ext)) {
+                case 'webp': return 'image/webp';
+                case 'gif':  return 'image/gif';
+                case 'png':  return 'image/png';
+                case 'svg':  return 'image/svg+xml';
+            }
+            return 'application/octet-stream';
+        };
+
+        $readFileAsDataUri = function(string $path) use ($mimeFor): string {
+            $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+            $mime = $mimeFor($ext);
+            $data = @file_get_contents($path);
+            if ($data === false) {
                 return '';
             }
+            return 'data:' . $mime . ';base64,' . base64_encode($data);
+        };
+
+        // Determine day/night if not provided
+        if ($isDay === null) {
+            $cur = $this->fetchOpenMeteo();
+            $dflag = null;
+            if (is_array($cur) && isset($cur['current']) && is_array($cur['current']) && isset($cur['current']['is_day'])) {
+                $dflag = ((int)$cur['current']['is_day'] === 1);
+            }
+            if ($dflag === null) {
+                $h = (int)date('G');
+                $dflag = ($h >= 6 && $h < 20);
+            }
+            $isDay = $dflag;
         }
-        $data = @file_get_contents($file);
-        if ($data === false) {
-            return '';
+
+        // Build candidate basenames for this WMO code; prefer descriptive slugs to keep existing filenames
+        $basenames = $this->mapWMOToIconBasenames($code, (bool)$isDay);
+        foreach ($dirs as $sub) {
+            $base = rtrim($root . ($sub !== '' ? $sub . DIRECTORY_SEPARATOR : ''), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+            // 1) Try descriptive basenames (existing icon sets)
+            foreach ($basenames as $bn) {
+                foreach ($exts as $ext) {
+                    $candidate = $base . $bn . '.' . $ext;
+                    if (@is_file($candidate)) {
+                        $uri = $readFileAsDataUri($candidate);
+                        if ($uri !== '') return $uri;
+                    }
+                }
+            }
+            // 2) Try numeric filename (optional future support)
+            foreach ($exts as $ext) {
+                $candidate = $base . $code . '.' . $ext;
+                if (@is_file($candidate)) {
+                    $uri = $readFileAsDataUri($candidate);
+                    if ($uri !== '') return $uri;
+                }
+            }
         }
-        return 'data:image/png;base64,' . base64_encode($data);
+        // Fallback to a generic icon present in the new sets
+        $sub = $dirs[0];
+        $base = rtrim($root . ($sub !== '' ? $sub . DIRECTORY_SEPARATOR : ''), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        foreach (['overcast', 'cloudy'] as $bn) {
+            foreach ($exts as $ext) {
+                $candidate = $base . $bn . '.' . $ext;
+                if (@is_file($candidate)) {
+                    $uri = $readFileAsDataUri($candidate);
+                    if ($uri !== '') return $uri;
+                }
+            }
+        }
+        return '';
+    }
+
+    private function mapWMOToIconBasenames(int $code, bool $assumeDay): array
+    {
+        $day = $assumeDay;
+        switch ($code) {
+            case 0: // Clear sky
+                return [$day ? 'clear-day' : 'clear-night'];
+            case 1: // Mainly clear
+                return [$day ? 'partly-cloudy-day' : 'partly-cloudy-night', 'clear-day'];
+            case 2: // Partly cloudy
+                return [$day ? 'partly-cloudy-day' : 'partly-cloudy-night', 'cloudy'];
+            case 3: // Overcast
+                return ['overcast', 'cloudy'];
+            case 45: // Fog
+            case 48: // Depositing rime fog
+                return [$day ? 'fog-day' : 'fog-night', 'fog', $day ? 'overcast-day-fog' : 'overcast-night-fog', 'overcast'];
+            case 51: // Drizzle light
+            case 53: // Drizzle moderate
+            case 55: // Drizzle dense
+                return [$day ? 'partly-cloudy-day-drizzle' : 'partly-cloudy-night-drizzle', 'drizzle', $day ? 'partly-cloudy-day-rain' : 'partly-cloudy-night-rain', 'rain'];
+            case 56: // Freezing Drizzle light
+            case 57: // Freezing Drizzle dense
+                return [$day ? 'partly-cloudy-day-sleet' : 'partly-cloudy-night-sleet', 'sleet'];
+            case 61: // Rain slight
+                return [$day ? 'partly-cloudy-day-rain' : 'partly-cloudy-night-rain', 'rain'];
+            case 63: // Rain moderate
+                return ['rain', $day ? 'partly-cloudy-day-rain' : 'partly-cloudy-night-rain'];
+            case 65: // Rain heavy
+                return [$day ? 'extreme-day-rain' : 'extreme-night-rain', 'rain'];
+            case 66: // Freezing Rain light
+            case 67: // Freezing Rain heavy
+                return [
+                    $day ? 'partly-cloudy-day-hail' : 'partly-cloudy-night-hail',
+                    $day ? 'overcast-day-hail' : 'overcast-night-hail',
+                    $day ? 'extreme-day-hail' : 'extreme-night-hail',
+                    'hail'
+                ];
+            case 71: // Snow fall slight
+            case 73: // Snow fall moderate
+                return [$day ? 'partly-cloudy-day-snow' : 'partly-cloudy-night-snow', 'snow'];
+            case 75: // Snow fall heavy
+                return [$day ? 'extreme-day-snow' : 'extreme-night-snow', 'snow'];
+            case 77: // Snow grains
+                return ['snow', 'snowflake'];
+            case 80: // Rain showers slight
+            case 81: // Rain showers moderate
+                return [$day ? 'partly-cloudy-day-rain' : 'partly-cloudy-night-rain', 'rain'];
+            case 82: // Rain showers violent
+                return [$day ? 'extreme-day-rain' : 'extreme-night-rain', 'rain'];
+            case 85: // Snow showers slight
+                return [$day ? 'partly-cloudy-day-snow' : 'partly-cloudy-night-snow', 'snow'];
+            case 86: // Snow showers heavy
+                return [$day ? 'extreme-day-snow' : 'extreme-night-snow', 'snow'];
+            case 95: // Thunderstorm slight or moderate
+                return [
+                    $day ? 'thunderstorms-day' : 'thunderstorms-night',
+                    $day ? 'thunderstorms-day-overcast' : 'thunderstorms-night-overcast',
+                    $day ? 'thunderstorms-day-rain' : 'thunderstorms-night-rain',
+                    $day ? 'thunderstorms-day-extreme' : 'thunderstorms-night-extreme'
+                ];
+            case 96: // Thunderstorm with slight hail
+            case 99: // Thunderstorm with heavy hail
+                return [
+                    $day ? 'thunderstorms-day-extreme' : 'thunderstorms-night-extreme',
+                    $day ? 'overcast-day-hail' : 'overcast-night-hail',
+                    'hail'
+                ];
+            default:
+                return ['overcast', 'cloudy'];
+        }
     }
 
     private function sendForecastUpdate(): void
@@ -1042,56 +1162,7 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->UpdateVisualizationValue(json_encode($payload));
     }
 
-    private function mapWUIconCodeToFA(int $code, bool $day): string
-    {
-        // Map Weather Underground/The Weather Company icon codes to Font Awesome slugs
-        // Only a minimal subset needed for common conditions in our usage.
-        $slug = 'cloud'; // default
-        switch ($code) {
-            case 32: // Sunny
-                $slug = 'sun';
-                break;
-            case 31: // Clear night
-            case 33: // Fair night
-                $slug = 'moon';
-                break;
-            case 30: // Partly Cloudy (day)
-                $slug = 'cloud-sun';
-                break;
-            case 29: // Partly Cloudy (night)
-                $slug = 'cloud-moon';
-                break;
-            case 28: // Mostly Cloudy
-                $slug = $day ? 'clouds-sun' : 'clouds-moon';
-                break;
-            case 27: // Mostly Cloudy (night)
-                $slug = 'clouds-moon';
-                break;
-            case 26: // Cloudy
-                $slug = 'clouds';
-                break;
-            case 11: // Light rain
-            case 12: // Showers
-                $slug = 'cloud-rain';
-                break;
-            case 39: // Scattered Showers (day)
-                $slug = 'cloud-sun-rain';
-                break;
-            case 40: // Scattered Showers (night)
-                $slug = 'cloud-moon-rain';
-                break;
-            case 15: // Thunderstorm
-            case 4:
-                $slug = 'cloud-bolt';
-                break;
-            case 13: // Snow flurries
-            case 14: // Light snow
-                $slug = 'snowflake';
-                break;
-        }
-        // Ensure fa-light style
-        return 'fa-light fa-' . $slug;
-    }
+    
 
     private function getIconHelper(): \TileVisu\Lib\IconHelper
     {

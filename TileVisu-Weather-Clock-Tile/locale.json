@@ -20,7 +20,8 @@
       "Date font size (px)": "Date font size (px)",
       "Date font size (px, 0 = auto)": "Date font size (px, 0 = auto)",
       "Date size factor (1-5)": "Date size factor (1-5)",
-      "Show seconds": "Show seconds"
+      "Show seconds": "Show seconds",
+      "Use animated icons": "Use animated icons"
     },
     "de": {
       "Temperature variable": "Temperatur-Variable",
@@ -42,7 +43,8 @@
       "Date font size (px)": "Schriftgröße Datum (px)",
       "Date font size (px, 0 = auto)": "Schriftgröße Datum (px, 0 = auto)",
       "Date size factor (1-5)": "Größenfaktor Datum (1–5)",
-      "Show seconds": "Sekunden anzeigen"
+      "Show seconds": "Sekunden anzeigen",
+      "Use animated icons": "animierte Icons"
     }
   }
 }

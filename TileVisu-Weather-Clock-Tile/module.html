@@ -1177,6 +1177,18 @@
         wrapper.classList.toggle('is-hidden', valueText === '');
       }
 
+      const iconUrl = (typeof tempData.iconUrl === 'string' && tempData.iconUrl.trim()) ? tempData.iconUrl.trim() : '';
+      const iconEl = document.getElementById('temperature-icon');
+      if (iconEl && iconUrl) {
+        iconEl.classList.remove('has-icon', 'has-image');
+        iconEl.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = iconUrl;
+        img.alt = '';
+        iconEl.appendChild(img);
+        iconEl.classList.add('has-image');
+      }
+
       scheduleLeftStackScale();
     }
 
@@ -1212,21 +1224,7 @@
       }
       mmEl.textContent = mm;
 
-      // set icon from forecast
-      iconEl.classList.remove('has-icon', 'has-image');
-      iconEl.innerHTML = '';
-      if (iconUrl) {
-        const img = document.createElement('img');
-        img.src = iconUrl;
-        img.alt = '';
-        iconEl.appendChild(img);
-        iconEl.classList.add('has-image');
-      } else if (iconClasses) {
-        const iTag = document.createElement('i');
-        iconClasses.split(/\s+/).forEach(cls => iTag.classList.add(cls));
-        iconEl.appendChild(iTag);
-        iconEl.classList.add('has-icon');
-      }
+      
 
       scheduleLeftStackScale();
     }
