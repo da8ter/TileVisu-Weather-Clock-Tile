@@ -15,6 +15,7 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterPropertyBoolean('ShowWeather', true);
         $this->RegisterPropertyBoolean('ShowForecast', true);
         $this->RegisterPropertyBoolean('UseAnimatedIcons', false);
+        $this->RegisterPropertyBoolean('UseOutlineIcons', true);
         $this->RegisterPropertyInteger('CustomMediaID', 0);
         $this->RegisterPropertyBoolean('ShowClock', true);
         $this->RegisterPropertyBoolean('ShowDate', true);
@@ -490,10 +491,6 @@ class TileVisuWeatherClockTile extends IPSModule
         return is_string($b64) && $b64 !== '';
     }
 
-    /**
-     * Sends a minimal payload to update only the custom background image without triggering
-     * any weather data refresh (temperature/forecast). Used on MM_UPDATE events.
-     */
     private function sendCustomImageUpdate(): void
     {
         if (!method_exists($this, 'UpdateVisualizationValue')) {
@@ -501,7 +498,6 @@ class TileVisuWeatherClockTile extends IPSModule
         }
         $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
         if (!$this->mediaHasContent($customMediaId)) {
-            // No content available; do not force a weather update here
             return;
         }
         $assetBase = '/hook/wetterbilder/' . $this->InstanceID;
@@ -620,7 +616,6 @@ class TileVisuWeatherClockTile extends IPSModule
         if ($Message === MM_UPDATE) {
             $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
             if ($customMediaId > 0 && $SenderID === $customMediaId) {
-                // Only update the displayed custom image; do not refresh weather data here
                 $this->sendCustomImageUpdate();
             }
         }
@@ -1007,7 +1002,13 @@ class TileVisuWeatherClockTile extends IPSModule
     {
         $root = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'icons' . DIRECTORY_SEPARATOR;
         $useAnimated = (bool)$this->ReadPropertyBoolean('UseAnimatedIcons');
-        $dirs = [$useAnimated ? 'animated' : 'static'];
+        $tmpOutline = @ $this->ReadPropertyBoolean('UseOutlineIcons');
+        $useOutline = ($tmpOutline === null || $tmpOutline === '' ? true : (bool)$tmpOutline);
+        $styleDir = $useOutline ? 'full' : 'outline';
+        $dirs = [
+            $styleDir . DIRECTORY_SEPARATOR . ($useAnimated ? 'animated' : 'static'),
+            ($useAnimated ? 'animated' : 'static')
+        ];
         $exts = ['webp', 'gif', 'png', 'svg'];
 
         $mimeFor = function(string $ext): string {

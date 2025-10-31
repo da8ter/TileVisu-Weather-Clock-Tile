@@ -37,6 +37,11 @@
     },
     {
       "type": "CheckBox",
+      "name": "UseOutlineIcons",
+      "caption": "outline/full"
+    },
+    {
+      "type": "CheckBox",
       "name": "ShowClock",
       "caption": "Show clock"
     },
