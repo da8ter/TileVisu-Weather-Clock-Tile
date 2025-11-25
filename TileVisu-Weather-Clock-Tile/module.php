@@ -39,6 +39,8 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterAttributeString('LastSlug', '');
         $this->RegisterAttributeString('LastTimeOfDay', '');
         $this->RegisterAttributeString('WebhookToken', '');
+
+        $this->RegisterVariableString('OpenMeteoRaw', $this->Translate('Open-Meteo weather data'));
     }
 
     public function Destroy()
@@ -845,6 +847,10 @@ class TileVisuWeatherClockTile extends IPSModule
         if (!is_string($content) || $content === '') {
             $this->SendDebug('OpenMeteo', 'Empty response or HTTP error', 0);
             return null;
+        }
+        $varId = @$this->GetIDForIdent('OpenMeteoRaw');
+        if ($varId > 0) {
+            @SetValueString($varId, $content);
         }
         $this->SendDebug('OpenMeteo', 'Response length: ' . strlen($content), 0);
         $data = @json_decode($content, true);
