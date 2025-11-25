@@ -24,11 +24,14 @@ Im Formular stehen folgende Einstellungen zur Verfügung:
 - **Show weather**: Schaltet die komplette Wetteranzeige (Hintergrundbild, Temperatur, Vorhersage) ein/aus. Wenn deaktiviert, werden keine Wetterdaten mehr abgefragt/gesendet.
 - **Custom media image**: Optionales Medienobjekt (Bild), das als Hintergrund angezeigt wird. Ist gesetzt, wird dieses Bild anstelle der dynamischen Wetterbilder verwendet (Temperatur/Vorhersage bleiben aktiv, solange „Show weather“ eingeschaltet ist).
 - **Show clock**: Blendt die FlipClock-Uhr ein/aus.
-- **Show date**: Blendt das Datum ein/aus.
+- **Show date**: Blendet das Datum ein/aus.
+- **Show seconds**: Blendet Sekunden in der FlipClock ein.
 - **Forecast width (%)**: Breite der Vorhersage in Prozent.
 - **Clock width (%)**: Breite der Uhr in Prozent.
 - **Date font size (px, 0 = auto)**: Feste Schriftgröße des Datums in Pixeln. 0 = Automatik.
 - **Date size factor (1–5)**: Faktor für die automatische Datumsschrift.
+
+- **Write weather data to variable**: Wenn aktiviert, legt das Modul eine String-Variable `OpenMeteoRaw` an und schreibt dort den letzten Open-Meteo JSON-Response (Wetterdaten) hinein. Wird die Option deaktiviert, wird die Variable automatisch wieder gelöscht.
 
 Hinweis: Wenn „Show weather“ deaktiviert ist, bleibt der Hintergrund leer (kein Fehlerhinweis), und es werden keine Temperatur-/Vorhersage-Updates übertragen. Wenn ein „Custom media image“ (Bild) gesetzt ist, wird dieses genutzt, sobald die Wetteranzeige aktiv ist.
 
