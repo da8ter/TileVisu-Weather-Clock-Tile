@@ -28,6 +28,7 @@ class TileVisuWeatherClockTile extends IPSModule
         // Date scale factor (1..5), multiplies (clockFontPx / 3)
         $this->RegisterPropertyInteger('DateScaleFactor', 3);
         $this->RegisterPropertyBoolean('ShowSeconds', false);
+        $this->RegisterPropertyBoolean('StoreWeatherData', false);
 
         // Register timers only in Create(); interval is set in ApplyChanges()
         $this->RegisterTimer('UpdateTimer', 3600000, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
@@ -39,8 +40,6 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterAttributeString('LastSlug', '');
         $this->RegisterAttributeString('LastTimeOfDay', '');
         $this->RegisterAttributeString('WebhookToken', '');
-
-        $this->RegisterVariableString('OpenMeteoRaw', $this->Translate('Open-Meteo weather data'));
     }
 
     public function Destroy()
@@ -190,6 +189,8 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterHook('/hook/wetterbilder/' . $this->InstanceID);
 
         $this->getWebhookToken();
+
+        $this->MaintainVariable('OpenMeteoRaw', $this->Translate('Open-Meteo weather data'), VARIABLETYPE_STRING, '', 0, (bool)$this->ReadPropertyBoolean('StoreWeatherData'));
 
         $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
         $previousVarId = (int)$this->ReadAttributeInteger('LastTemperatureVarID');

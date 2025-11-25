@@ -23,7 +23,8 @@
       "Show seconds": "Show seconds",
       "Use animated icons": "Use animated icons",
       "outline/full": "Icon style: Outline/Fill",
-      "Open-Meteo weather data": "Open-Meteo weather data"
+      "Open-Meteo weather data": "Open-Meteo weather data",
+      "Write weather data to variable": "Write weather data to variable"
     },
     "de": {
       "Temperature variable": "Temperatur-Variable",
@@ -48,7 +49,8 @@
       "Show seconds": "Sekunden anzeigen",
       "Use animated icons": "animierte Icon",
       "outline/full": "Icon-Style: Linie/Fläche",
-      "Open-Meteo weather data": "Open-Meteo Wetterdaten"
+      "Open-Meteo weather data": "Open-Meteo Wetterdaten",
+      "Write weather data to variable": "Wetterdaten in Variable schreiben"
     }
   }
 }
