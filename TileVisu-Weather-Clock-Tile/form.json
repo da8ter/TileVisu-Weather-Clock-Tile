@@ -56,6 +56,11 @@
       "caption": "Show seconds"
     },
     {
+      "type": "CheckBox",
+      "name": "StoreWeatherData",
+      "caption": "Write weather data to variable"
+    },
+    {
       "type": "SelectMedia",
       "name": "CustomMediaID",
       "caption": "Custom media image"
