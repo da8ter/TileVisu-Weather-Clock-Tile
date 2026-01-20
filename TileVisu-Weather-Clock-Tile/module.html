@@ -544,10 +544,6 @@
         return;
       }
       if (flipClock) {
-        if (clockSyncTimer) {
-          clearTimeout(clockSyncTimer);
-          clockSyncTimer = null;
-        }
         return;
       }
 
@@ -771,7 +767,6 @@
           container.appendChild(dateEl);
         }
       }
-      console.log('resizeClock: start');
       // Reset any transform-based scaling and let CSS handle size
       clockContainer.style.transform = 'none';
       clockContainer.style.height = '';
@@ -826,7 +821,6 @@
     }
 
     function updateDate() {
-      console.log('Updating date...');
       const dateEl = document.getElementById('date');
       if (!dateEl) {
         return;
@@ -950,7 +944,6 @@
               try {
                 const code = (typeof data.wmoCode !== 'undefined') ? data.wmoCode : null;
                 const imgName = (typeof data.imageName === 'string') ? data.imageName : '';
-                console.debug('TileVisu Weather: WMO code =', code, 'Bildname =', imgName);
               } catch (e) {}
               const sw = (typeof data.showWeather === 'boolean') ? data.showWeather : true;
               const url = (typeof data.url === 'string') ? data.url.trim() : '';
