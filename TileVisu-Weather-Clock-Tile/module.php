@@ -29,6 +29,7 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterPropertyInteger('DateScaleFactor', 3);
         $this->RegisterPropertyBoolean('ShowSeconds', false);
         $this->RegisterPropertyBoolean('StoreWeatherData', false);
+        $this->RegisterPropertyBoolean('StoreImageUrl', false);
 
         // Register timers only in Create(); interval is set in ApplyChanges()
         $this->RegisterTimer('UpdateTimer', 3600000, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
@@ -191,6 +192,7 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->getWebhookToken();
 
         $this->MaintainVariable('OpenMeteoRaw', $this->Translate('Open-Meteo weather data'), VARIABLETYPE_STRING, '', 0, (bool)$this->ReadPropertyBoolean('StoreWeatherData'));
+        $this->MaintainVariable('CurrentImageUrl', $this->Translate('Current weather image URL'), VARIABLETYPE_STRING, '', 1, (bool)$this->ReadPropertyBoolean('StoreImageUrl'));
 
         $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
         $previousVarId = (int)$this->ReadAttributeInteger('LastTemperatureVarID');
@@ -424,6 +426,7 @@ class TileVisuWeatherClockTile extends IPSModule
                 'token'                => $this->getWebhookToken()
             ];
             $this->UpdateVisualizationValue(json_encode($payload));
+            $this->updateCurrentImageUrl($url);
             return;
         }
 
@@ -434,6 +437,7 @@ class TileVisuWeatherClockTile extends IPSModule
             $payload['wmoCode'] = null;
             $payload['imageName'] = 'custom';
             $this->UpdateVisualizationValue(json_encode($payload));
+            $this->updateCurrentImageUrl($url);
             return;
         }
 
@@ -480,6 +484,15 @@ class TileVisuWeatherClockTile extends IPSModule
         $payload['wmoCode'] = $wmoCode;
         $payload['imageName'] = $baseName;
         $this->UpdateVisualizationValue(json_encode($payload));
+        $this->updateCurrentImageUrl($webhookUrl);
+    }
+
+    private function updateCurrentImageUrl(string $url): void
+    {
+        $varId = @$this->GetIDForIdent('CurrentImageUrl');
+        if ($varId > 0) {
+            @SetValue($varId, $url);
+        }
     }
 
     private function mediaHasContent(int $mediaId): bool

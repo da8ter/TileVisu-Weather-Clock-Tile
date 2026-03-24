@@ -61,6 +61,11 @@
       "caption": "Write weather data to variable"
     },
     {
+      "type": "CheckBox",
+      "name": "StoreImageUrl",
+      "caption": "Write image URL to variable"
+    },
+    {
       "type": "SelectMedia",
       "name": "CustomMediaID",
       "caption": "Custom media image"

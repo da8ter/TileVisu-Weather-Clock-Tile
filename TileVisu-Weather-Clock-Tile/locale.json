@@ -24,7 +24,9 @@
       "Use animated icons": "Use animated icons",
       "outline/full": "Icon style: Outline/Fill",
       "Open-Meteo weather data": "Open-Meteo weather data",
-      "Write weather data to variable": "Write weather data to variable"
+      "Write weather data to variable": "Write weather data to variable",
+      "Current weather image URL": "Current weather image URL",
+      "Write image URL to variable": "Write image URL to variable"
     },
     "de": {
       "Temperature variable": "Temperatur-Variable",
@@ -50,7 +52,9 @@
       "Use animated icons": "animierte Icon",
       "outline/full": "Icon-Style: Linie/Fläche",
       "Open-Meteo weather data": "Open-Meteo Wetterdaten",
-      "Write weather data to variable": "Wetterdaten in Variable schreiben"
+      "Write weather data to variable": "Wetterdaten in Variable schreiben",
+      "Current weather image URL": "Aktuelle Wetterbild-URL",
+      "Write image URL to variable": "Bild-URL in Variable schreiben"
     }
   }
 }
