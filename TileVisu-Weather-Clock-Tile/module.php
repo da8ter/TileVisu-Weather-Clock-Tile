@@ -7,6 +7,8 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
     // Bild-Hook unter /hook/ (ohne Praefix, wie RegisterHook es erwartet): derselbe Pfad wie bisher,
     // bestehende Adressen bleiben gueltig
     private const HOOK_PATH = 'wetterbilder/';
+    // Wetter, Bild und Vorhersage im Stundentakt
+    private const UPDATE_INTERVAL_MS = 3600000;
     // Ident des Skripts, das Versionen bis Oktober 2025 als Ziel des WebHook-Eintrags unter der Instanz anlegten
     private const LEGACY_HOOK_SCRIPT_IDENT = 'HookScript';
     // Was der Hook ausliefert: Wetterbilder (Endung => Typ), Meteocons unter assets/icons und die FlipClock-Dateien
@@ -54,8 +56,8 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         $this->RegisterPropertyBoolean('StoreWeatherData', false);
         $this->RegisterPropertyBoolean('StoreImageUrl', false);
 
-        // Register timers only in Create(); interval is set in ApplyChanges()
-        $this->RegisterTimer('UpdateTimer', 3600000, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
+        // Register timers only in Create(); ApplyChanges only corrects a different interval
+        $this->RegisterTimer('UpdateTimer', self::UPDATE_INTERVAL_MS, "IPS_RequestAction(\$_IPS['TARGET'], 'UpdateNow', 0);");
 
 
         // Runtime (Subscriptions)
@@ -185,8 +187,12 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             $this->WriteAttributeInteger('LastCustomMediaID', 0);
         }
 
-        // Set periodic timer interval: every 60 minutes (3600000 ms)
-        $this->SetTimerInterval('UpdateTimer', 3600000);
+        // Jedes SetTimerInterval startet die Stunde neu: nur setzen, wenn der Timer nicht schon stuendlich laeuft,
+        // sonst verhungert er bei haeufigen ApplyChanges (Modul-Reloads, Konfiguration). Verpasste Abrufe holen
+        // GetState und ApplyChanges nach, sobald die Daten veraltet sind.
+        if ($this->GetTimerInterval('UpdateTimer') !== self::UPDATE_INTERVAL_MS) {
+            $this->SetTimerInterval('UpdateTimer', self::UPDATE_INTERVAL_MS);
+        }
 
         // Neue Konfiguration: alle Kacheln bekommen den vollstaendigen Stand (die Pruefwerte der zuletzt
         // gesendeten Nachrichten gelten nicht mehr); abgerufen wird nur bei veralteten Daten oder neuem Standort
