@@ -2,9 +2,15 @@
 
 declare(strict_types=1);
 
-class TileVisuWeatherClockTile extends IPSModule
+class TileVisuWeatherClockTile extends IPSModuleStrict
 {
-    public function Create()
+    // Bild-Hook unter /hook/ (ohne Praefix, wie RegisterHook es erwartet): derselbe Pfad wie bisher,
+    // bestehende Adressen bleiben gueltig
+    private const HOOK_PATH = 'wetterbilder/';
+    // Ident des Skripts, das Versionen bis Oktober 2025 als Ziel des WebHook-Eintrags unter der Instanz anlegten
+    private const LEGACY_HOOK_SCRIPT_IDENT = 'HookScript';
+
+    public function Create(): void
     {
         // Never delete this line!
         parent::Create();
@@ -41,15 +47,27 @@ class TileVisuWeatherClockTile extends IPSModule
         $this->RegisterAttributeString('LastSlug', '');
         $this->RegisterAttributeString('LastTimeOfDay', '');
         $this->RegisterAttributeString('WebhookToken', '');
+
+        // Aktiviert die HTML-SDK Darstellung (HTML-Kachel)
+        $this->SetVisualizationType(1);
+
+        // Bilder und FlipClock-Dateien ueber den nativen Hook /hook/wetterbilder/<InstanceID>. Die Registrierung
+        // ist fluechtig, deshalb in Create (laeuft bei jedem Systemstart); das WebHook Control bleibt unangetastet.
+        $hookRegistered = $this->RegisterHook(self::HOOK_PATH . $this->InstanceID);
+        $this->SetBuffer('ImageHook', $hookRegistered ? '1' : '');
+        if (!$hookRegistered) {
+            $this->LogMessage(sprintf($this->Translate('The image hook /hook/wetterbilder/%d could not be registered.'), $this->InstanceID), KL_WARNING);
+        }
     }
 
-    public function Destroy()
+    public function Destroy(): void
     {
         // Never delete this line!
         parent::Destroy();
     }
     
-    protected function ProcessHookData()
+    // Symcon ruft Hooks ueber einen Aufsatz der Modulklasse auf; bei IPSModuleStrict mit ": void"
+    protected function ProcessHookData(): void
     {
         $baseDir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'wetterbilder';
         $assetDir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'flipclock';
@@ -132,13 +150,9 @@ class TileVisuWeatherClockTile extends IPSModule
             }
         }
         if ($name === '') {
-            try {
-                $name = (string)$this->RequestAction('WebhookGetName', 0);
-            } catch (\Throwable $e) {
-                $name = '';
-            }
+            $name = $this->currentBackgroundName();
         }
-        if (!is_string($name) || $name === '') {
+        if ($name === '') {
             http_response_code(404);
             echo 'Kein Bild verfügbar';
             return;
@@ -174,22 +188,19 @@ class TileVisuWeatherClockTile extends IPSModule
         echo 'Kein Bild verfügbar';
     }
 
-    public function ApplyChanges()
+    public function ApplyChanges(): void
     {
         // Never delete this line!
         parent::ApplyChanges();
 
-        // Aktiviert die HTML-SDK Darstellung (HTML-Kachel)
-        // Hinweis: Signatur SetVisualizationType kann je nach IPS-Version variieren; hier Standardaufruf
-        if (method_exists($this, 'SetVisualizationType')) {
-            // 1 = HTML (gemäß HTML-SDK Dokumentation)
-            @$this->SetVisualizationType(1);
+        // Kein Heavy Work vor KR_READY: IPS_KERNELSTARTED ruft ApplyChanges erneut auf
+        if (IPS_GetKernelRunlevel() !== KR_READY) {
+            $this->RegisterMessage(0, IPS_KERNELSTARTED);
+            return;
         }
 
-        // WebHook registrieren (Bilderauslieferung über /hook/wetterbilder/<InstanceID>)
-        $this->RegisterHook('/hook/wetterbilder/' . $this->InstanceID);
-
         $this->getWebhookToken();
+        $this->removeLegacyHookScript();
 
         $this->MaintainVariable('OpenMeteoRaw', $this->Translate('Open-Meteo weather data'), VARIABLETYPE_STRING, '', 0, (bool)$this->ReadPropertyBoolean('StoreWeatherData'));
         $this->MaintainVariable('CurrentImageUrl', $this->Translate('Current weather image URL'), VARIABLETYPE_STRING, '', 1, (bool)$this->ReadPropertyBoolean('StoreImageUrl'));
@@ -237,12 +248,13 @@ class TileVisuWeatherClockTile extends IPSModule
         }
     }
 
-    public function GetVisualizationTile()
+    public function GetVisualizationTile(): string
     {
         // Liefert den HTML-Inhalt der Kachel (HTML-SDK)
         $path = __DIR__ . DIRECTORY_SEPARATOR . 'module.html';
-        if (is_file($path)) {
-            return file_get_contents($path);
+        $html = is_file($path) ? file_get_contents($path) : false;
+        if (is_string($html)) {
+            return $html;
         }
         return '<div style="padding:1rem;color:#fff;background:#000;">module.html not found</div>';
     }
@@ -259,65 +271,51 @@ class TileVisuWeatherClockTile extends IPSModule
         }
     }
 
-    public function RequestAction($Ident, $Value)
+    public function RequestAction(string $Ident, mixed $Value): void
     {
         switch ($Ident) {
             case 'UpdateNow':
                 $this->UpdateNow();
-                return true;
+                return;
             case 'GetState':
                 // Ermittele aktuellen Zustand (Slug/ToD) und referenziere Nutzer-Medienobjekt
                 $this->UpdateNow();
-                return true;
-            case 'WebhookGetName':
-                // Liefert den aktuellen Basisnamen (slug-day|night)
-                $slug = strtolower(trim($this->ReadAttributeString('LastSlug') ?: ''));
-                $tod  = strtolower(trim($this->ReadAttributeString('LastTimeOfDay') ?: ''));
-                if ($slug !== '' && ($tod === 'day' || $tod === 'night')) {
-                    return $slug . '-' . $tod;
-                }
-                return '';
+                return;
         }
         throw new Exception('Invalid Ident');
     }
 
     // ----------------------------- Helpers -----------------------------
 
-    /**
-     * Registriert/aktualisiert einen WebHook-Eintrag im WebHook Control und verknüpft ihn
-     * mit einem automatisch erzeugten Script, welches die Bildauslieferung übernimmt.
-     */
-    private function RegisterHook(string $hookPath): void
+    // Aktueller Basisname des Wetterbilds (slug-day|night) fuer Hook-Anfragen ohne Namen; '' ohne Stand
+    private function currentBackgroundName(): string
     {
-        $webhookModuleId = '{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}';
-        $ids = @IPS_GetInstanceListByModuleID($webhookModuleId);
-        if (!is_array($ids) || count($ids) === 0) {
-            $this->LogMessage($this->Translate('WebHook Control not found. Skipping hook registration.'), KL_WARNING);
-            return;
+        $slug = strtolower(trim($this->ReadAttributeString('LastSlug')));
+        $tod = strtolower(trim($this->ReadAttributeString('LastTimeOfDay')));
+        if ($slug !== '' && ($tod === 'day' || $tod === 'night')) {
+            return $slug . '-' . $tod;
         }
-        $whId = $ids[0];
+        return '';
+    }
 
-        $hooks = @json_decode(IPS_GetProperty($whId, 'Hooks'), true);
-        if (!is_array($hooks)) {
-            $hooks = [];
-        }
-        $found = false;
-        foreach ($hooks as &$h) {
-            if (isset($h['Hook']) && $h['Hook'] === $hookPath) {
-                $h['TargetID'] = $this->InstanceID;
-                $found = true;
-                break;
+    // Versionen bis Oktober 2025 legten unter der Instanz ein verstecktes Skript als Ziel des WebHook-Eintrags an
+    // (Ident HookScript, Name "Wetterbilder WebHook"). Seitdem zeigt der Hook auf die Instanz, das Skript ist
+    // verwaist. Geloescht wird nur, was erkennbar dieses Skript dieser Instanz ist.
+    private function removeLegacyHookScript(): void
+    {
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $childID) {
+            if (!IPS_ScriptExists($childID) || IPS_GetObject($childID)['ObjectIdent'] !== self::LEGACY_HOOK_SCRIPT_IDENT) {
+                continue;
+            }
+            $content = @IPS_GetScriptContent($childID);
+            if (!is_string($content) || !str_contains($content, "\$_IPS['SENDER'] === 'WebHook'")
+                || !str_contains($content, '$iid = ' . $this->InstanceID . ';')) {
+                continue;
+            }
+            if (IPS_DeleteScript($childID, true)) {
+                $this->LogMessage(sprintf($this->Translate('Removed the obsolete hook script #%d of an earlier module version.'), $childID), KL_MESSAGE);
             }
         }
-        if (!$found) {
-            $hooks[] = [
-                'Hook' => $hookPath,
-                'TargetID' => $this->InstanceID
-            ];
-        }
-
-        IPS_SetProperty($whId, 'Hooks', json_encode($hooks));
-        IPS_ApplyChanges($whId);
     }
 
     private function getWebhookToken(): string
@@ -379,9 +377,6 @@ class TileVisuWeatherClockTile extends IPSModule
 
     private function sendImageUpdate(): void
     {
-        if (!method_exists($this, 'UpdateVisualizationValue')) {
-            return;
-        }
         $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
         $showClock   = (bool)$this->ReadPropertyBoolean('ShowClock');
         $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
@@ -425,7 +420,7 @@ class TileVisuWeatherClockTile extends IPSModule
                 'showForecast'         => false,
                 'token'                => $this->getWebhookToken()
             ];
-            $this->UpdateVisualizationValue(json_encode($payload));
+            $this->sendPayload($payload);
             $this->updateCurrentImageUrl($url);
             return;
         }
@@ -436,7 +431,7 @@ class TileVisuWeatherClockTile extends IPSModule
             $payload = $this->buildVisualizationPayload($url, '', '');
             $payload['wmoCode'] = null;
             $payload['imageName'] = 'custom';
-            $this->UpdateVisualizationValue(json_encode($payload));
+            $this->sendPayload($payload);
             $this->updateCurrentImageUrl($url);
             return;
         }
@@ -483,12 +478,27 @@ class TileVisuWeatherClockTile extends IPSModule
         $payload = $this->buildVisualizationPayload($webhookUrl, $slug, $tod);
         $payload['wmoCode'] = $wmoCode;
         $payload['imageName'] = $baseName;
-        $this->UpdateVisualizationValue(json_encode($payload));
+        $this->sendPayload($payload);
         $this->updateCurrentImageUrl($webhookUrl);
+    }
+
+    // Nachricht an alle offenen Kacheln; ein nicht kodierbarer Wert geht nicht als leerer Text hinaus
+    private function sendPayload(array $payload): void
+    {
+        $json = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($json === false) {
+            $this->SendDebug('Payload', 'JSON encoding failed: ' . json_last_error_msg(), 0);
+            return;
+        }
+        $this->UpdateVisualizationValue($json);
     }
 
     private function updateCurrentImageUrl(string $url): void
     {
+        // Die Variable gibt es nur, solange die Option aktiv ist (MaintainVariable in ApplyChanges)
+        if (!$this->ReadPropertyBoolean('StoreImageUrl')) {
+            return;
+        }
         $varId = @$this->GetIDForIdent('CurrentImageUrl');
         if ($varId > 0) {
             @SetValue($varId, $url);
@@ -509,9 +519,6 @@ class TileVisuWeatherClockTile extends IPSModule
 
     private function sendCustomImageUpdate(): void
     {
-        if (!method_exists($this, 'UpdateVisualizationValue')) {
-            return;
-        }
         $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
         if (!$this->mediaHasContent($customMediaId)) {
             return;
@@ -526,7 +533,7 @@ class TileVisuWeatherClockTile extends IPSModule
             'ts'        => time(),
             'assetBase' => $assetBase
         ];
-        $this->UpdateVisualizationValue(json_encode($payload));
+        $this->sendPayload($payload);
     }
 
     private function resolveExistingBackground(string $baseName, string $tod): string
@@ -621,8 +628,12 @@ class TileVisuWeatherClockTile extends IPSModule
         return 'hazy-' . $dn;
     }
 
-    public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
+    public function MessageSink(int $TimeStamp, int $SenderID, int $Message, array $Data): void
     {
+        if ($Message === IPS_KERNELSTARTED) {
+            $this->ApplyChanges();
+            return;
+        }
         if ($Message === VM_UPDATE) {
             $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
             if ($temperatureVarId > 0 && $SenderID === $temperatureVarId) {
@@ -643,9 +654,6 @@ class TileVisuWeatherClockTile extends IPSModule
 
     private function sendTemperatureUpdate(): void
     {
-        if (!method_exists($this, 'UpdateVisualizationValue')) {
-            return;
-        }
         if (!(bool)$this->ReadPropertyBoolean('ShowWeather')) {
             return;
         }
@@ -677,7 +685,7 @@ class TileVisuWeatherClockTile extends IPSModule
             'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast'),
             'token'                => $this->getWebhookToken()
         ];
-        $this->UpdateVisualizationValue(json_encode($payload));
+        $this->sendPayload($payload);
     }
 
     private function getTemperaturePayload(): array
@@ -862,7 +870,7 @@ class TileVisuWeatherClockTile extends IPSModule
             $this->SendDebug('OpenMeteo', 'Empty response or HTTP error', 0);
             return null;
         }
-        $varId = @$this->GetIDForIdent('OpenMeteoRaw');
+        $varId = $this->ReadPropertyBoolean('StoreWeatherData') ? @$this->GetIDForIdent('OpenMeteoRaw') : 0;
         if ($varId > 0) {
             @SetValueString($varId, $content);
         }
@@ -1022,8 +1030,7 @@ class TileVisuWeatherClockTile extends IPSModule
     {
         $root = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'icons' . DIRECTORY_SEPARATOR;
         $useAnimated = (bool)$this->ReadPropertyBoolean('UseAnimatedIcons');
-        $tmpOutline = @ $this->ReadPropertyBoolean('UseOutlineIcons');
-        $useOutline = ($tmpOutline === null || $tmpOutline === '' ? true : (bool)$tmpOutline);
+        $useOutline = $this->ReadPropertyBoolean('UseOutlineIcons');
         $styleDir = $useOutline ? 'full' : 'outline';
         $dirs = [
             $styleDir . DIRECTORY_SEPARATOR . ($useAnimated ? 'animated' : 'static'),
@@ -1176,9 +1183,6 @@ class TileVisuWeatherClockTile extends IPSModule
 
     private function sendForecastUpdate(): void
     {
-        if (!method_exists($this, 'UpdateVisualizationValue')) {
-            return;
-        }
         if (!(bool)$this->ReadPropertyBoolean('ShowWeather')) {
             return;
         }
@@ -1208,7 +1212,7 @@ class TileVisuWeatherClockTile extends IPSModule
             'showForecast'         => $showForecast,
             'token'                => $this->getWebhookToken()
         ];
-        $this->UpdateVisualizationValue(json_encode($payload));
+        $this->sendPayload($payload);
     }
 
     

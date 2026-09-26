@@ -11,7 +11,7 @@
 
 ## Voraussetzungen
 
-- IP-Symcon ab Version **7.1**
+- IP-Symcon ab Version **8.1**
 - Internetzugang für die Open-Meteo API (kein API-Key erforderlich)
 
 ## Installation
