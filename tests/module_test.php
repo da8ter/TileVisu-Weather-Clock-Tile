@@ -30,6 +30,49 @@ function tile_module(int $id = 12345, array $properties = []): TileVisuWeatherCl
     return $m;
 }
 
+// Nachrichten an offene Kacheln nur bei echter Aenderung: Zeilen [Bezeichnung, erwartete Nachrichten, gesendete].
+// Laeuft auch gegen den Stand vor diesen Aenderungen (Gegenprobe).
+function nachrichtenfilter(): array
+{
+    reset_world();
+    $GLOBALS['weatherBody'] = weather_json(63, 1);
+    variable(700, 21.5, '21,5 °C');
+    $GLOBALS['media'][500] = ['content' => base64_encode("\x89PNG\x0D\x0A\x1A\x0A" . str_repeat('A', 40))];
+    $m = tile_module(27001, ['TemperatureVariableID' => 700]);
+    $m->ApplyChanges();
+    $rows = [];
+    $count = static function (string $label, int $expected, callable $action) use ($m, &$rows): void {
+        $before = count($m->updates);
+        $action();
+        $rows[] = [$label, $expected, count($m->updates) - $before];
+    };
+    // $Data wie von Symcon: [neuer Wert, geaendert, alter Wert, Zeitstempel]
+    $update = static fn (array $data): callable => static fn () => $m->MessageSink(0, 700, VM_UPDATE, $data);
+    $count('Update without a new value ($Data[1] false) sends nothing', 0, $update([21.5, false, 21.5, 1]));
+    $GLOBALS['variables'][700] = ['value' => 22.0, 'formatted' => '22,0 °C'];
+    $count('Changed value sends its message', 1, $update([22.0, true, 21.5, 2]));
+    // Neuer Wert, gleiche Anzeige: die Nachricht ist dieselbe
+    $GLOBALS['variables'][700]['value'] = 22.04;
+    $count('Identical message is not sent again (memory per key)', 0, $update([22.04, true, 22.0, 3]));
+    // Die Bildnachricht traegt die Temperatur mit: nach deren Aenderung geht sie einmal hinaus
+    $count('Hourly timer after a temperature change sends the image message once', 1, static fn () => $m->UpdateNow());
+    $count('Hourly timer with unchanged weather sends nothing', 0, static fn () => $m->UpdateNow());
+    $GLOBALS['weatherBody'] = weather_json(3, 1);
+    $count('Hourly timer with changed weather sends one message', 1, static fn () => $m->UpdateNow());
+    $m->properties['CustomMediaID'] = 500;
+    $count('ApplyChanges sends the full state as one message', 1, static fn () => $m->ApplyChanges());
+    $count('Unchanged custom image (MM_UPDATE) sends nothing', 0, static fn () => $m->MessageSink(0, 500, MM_UPDATE, []));
+    $GLOBALS['media'][500]['content'] = base64_encode("\xFF\xD8\xFF\xE0" . str_repeat('B', 40));
+    $count('Changed custom image sends one image message', 1, static fn () => $m->MessageSink(0, 500, MM_UPDATE, []));
+    $count('After ApplyChanges the same temperature message goes out again', 1, $update([22.04, true, 22.0, 4]));
+    $count('... but only once', 0, $update([22.04, true, 22.0, 5]));
+    $m->GetVisualizationTile();
+    $count('After the initial build of a tile it goes out again', 1, $update([22.04, true, 22.0, 6]));
+    $m->GetVisualizationTile();
+    $count('Without $Data[1] (other format) the update is sent', 1, $update([]));
+    return $rows;
+}
+
 echo '--- Module Strict' . PHP_EOL;
 $class = new ReflectionClass('TileVisuWeatherClockTile');
 check($class->getParentClass()->getName() === 'IPSModuleStrict', 'Module extends IPSModuleStrict');
@@ -371,5 +414,27 @@ $d->properties['StoreWeatherData'] = true;
 $d->ApplyChanges();
 $d->UpdateNow();
 check(GetValue($d->idents['OpenMeteoRaw']) === $weatherBody, 'OpenMeteoRaw still receives the raw answer of each fetch');
+
+echo '--- Nur bei echter Aenderung' . PHP_EOL;
+foreach (nachrichtenfilter() as [$label, $expected, $actual]) {
+    check($actual === $expected, $label . ' (' . $actual . ' messages)');
+}
+reset_world();
+$weatherBody = weather_json(63, 1);
+variable(700, 21.5, '21,5 °C');
+$u = tile_module(27002, ['TemperatureVariableID' => 700]);
+$u->ApplyChanges();
+$weatherBody = weather_json(95, 1);
+$u->updates = [];
+$u->UpdateNow();
+check(count($u->updates) === 1 && last_message($u->updates, 'image')['temperature']['value'] === '21,5 °C'
+    && count(last_message($u->updates, 'image')['forecast']) === 4, 'One image message carries temperature and forecast (no separate messages)');
+$u->properties['ShowWeather'] = false;
+$u->ApplyChanges();
+$variables[700] = ['value' => 30.0, 'formatted' => '30,0 °C'];
+$u->updates = [];
+$u->MessageSink(0, 700, VM_UPDATE, [30.0, true, 21.5, 7]);
+check($u->updates === [], 'Without weather display a temperature update sends nothing');
+check(strlen($u->buffers['UpdateHashes']) < 200, 'Hash buffer stays tiny');
 
 echo 'OK' . PHP_EOL;

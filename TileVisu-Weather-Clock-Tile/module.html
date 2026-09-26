@@ -366,6 +366,8 @@
     let lastShowSeconds = null;
     // Zuletzt gezeigtes Hintergrundbild: dieselbe (versionierte) Adresse wird nicht neu geladen
     let currentImageUrl = '';
+    // Tag des angezeigten Datums: die Kachel zieht es um Mitternacht selbst nach
+    let shownDateKey = '';
 
     // FlipClock-Dateien: fertige Adressen vom Modul (versioniert über den Bild-Hook, ohne Hook als Data-URI).
     // Die Kachel setzt weder Adressen noch Token selbst zusammen.
@@ -780,6 +782,7 @@
       if (!dateEl) {
         return;
       }
+      shownDateKey = new Date().toDateString();
       try {
         const formatter = new Intl.DateTimeFormat('de-DE', {
           day: '2-digit',
@@ -791,6 +794,14 @@
       } catch (e) {
         // Fallback to simple date format
         dateEl.textContent = new Date().toLocaleDateString('de-DE');
+      }
+    }
+
+    // Uhr und Datum laufen in der Kachel: das Modul schickt nur bei geänderten Werten, also auch um Mitternacht
+    // nichts. Das Datum zieht die Kachel deshalb selbst nach.
+    function updateDateIfChanged() {
+      if (new Date().toDateString() !== shownDateKey) {
+        updateDate();
       }
     }
 
@@ -1200,6 +1211,8 @@
       applyClockVertical();
       scheduleLeftStackScale();
       scheduleResizeClock({ force: true });
+      updateDateIfChanged();
+      setInterval(updateDateIfChanged, 30000);
     });
   </script>
 </head>

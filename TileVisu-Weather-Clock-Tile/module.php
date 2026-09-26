@@ -188,9 +188,11 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         // Set periodic timer interval: every 60 minutes (3600000 ms)
         $this->SetTimerInterval('UpdateTimer', 3600000);
 
-        // Neue Konfiguration an alle Kacheln; abgerufen wird nur bei veralteten Daten oder neuem Standort
+        // Neue Konfiguration: alle Kacheln bekommen den vollstaendigen Stand (die Pruefwerte der zuletzt
+        // gesendeten Nachrichten gelten nicht mehr); abgerufen wird nur bei veralteten Daten oder neuem Standort
+        $this->SetBuffer('UpdateHashes', '');
         $this->refreshWeatherIfStale();
-        $this->sendState();
+        $this->sendImageUpdate();
     }
 
     public function GetVisualizationTile(): string
@@ -201,6 +203,8 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         if (!is_string($html)) {
             return '<div style="padding:1rem;color:#fff;background:#000;">module.html not found</div>';
         }
+        // Erstaufbau: diese Kachel bekommt den vollen Stand, danach geht jede Aenderung wieder hinaus
+        $this->SetBuffer('UpdateHashes', '');
         // Anfangszustand im Dokument statt per UpdateVisualizationValue an alle Kacheln; aus dem Zwischenspeicher,
         // das Oeffnen ruft nichts bei Open-Meteo ab. Die FlipClock-Dateien braucht nur der Erstaufbau.
         $message = $this->imageMessage();
@@ -224,7 +228,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         if ((bool)$this->ReadPropertyBoolean('ShowWeather')) {
             $this->fetchWeather();
         }
-        $this->sendState();
+        $this->sendImageUpdate();
     }
 
     public function RequestAction(string $Ident, mixed $Value): void
@@ -237,7 +241,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
                 // Die Kachel bringt ihren Stand im Dokument mit (GetVisualizationTile). Abgerufen und an alle
                 // Kacheln gesendet wird nur, wenn die Wetterdaten veraltet sind.
                 if ($this->refreshWeatherIfStale()) {
-                    $this->sendState();
+                    $this->sendImageUpdate();
                 }
                 return;
         }
@@ -516,20 +520,12 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         ];
     }
 
-    // Bild, Temperatur und Vorhersage an alle offenen Kacheln
-    private function sendState(): void
-    {
-        $this->sendImageUpdate();
-        if ((bool)$this->ReadPropertyBoolean('ShowWeather')) {
-            $this->sendTemperatureUpdate();
-            $this->sendForecastUpdate();
-        }
-    }
-
+    // Vollstaendiger Stand an alle offenen Kacheln, nur wenn er sich geaendert hat: die Bildnachricht traegt auch
+    // Temperatur und Vorhersage (frueher gingen beide zusaetzlich einzeln hinaus)
     private function sendImageUpdate(): void
     {
         $payload = $this->imageMessage();
-        $this->sendPayload($payload);
+        $this->sendUpdateIfChanged('image', $payload);
         $this->updateCurrentImageUrl($payload['url']);
     }
 
@@ -631,17 +627,6 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         return $payload;
     }
 
-    // Nachricht an alle offenen Kacheln; ein nicht kodierbarer Wert geht nicht als leerer Text hinaus
-    private function sendPayload(array $payload): void
-    {
-        $json = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE);
-        if ($json === false) {
-            $this->SendDebug('Payload', 'JSON encoding failed: ' . json_last_error_msg(), 0);
-            return;
-        }
-        $this->UpdateVisualizationValue($json);
-    }
-
     private function updateCurrentImageUrl(string $url): void
     {
         // Die Variable gibt es nur, solange die Option aktiv ist (MaintainVariable in ApplyChanges)
@@ -653,21 +638,6 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             // Eine eingebettete Data-URI (ohne Hook) gehoert nicht in eine Variable
             @SetValue($varId, str_starts_with($url, 'data:') ? '' : $url);
         }
-    }
-
-    private function sendCustomImageUpdate(): void
-    {
-        $url = $this->customImageSource();
-        if ($url === '') {
-            return;
-        }
-        $payload = [
-            'type'      => 'image',
-            'url'       => $url,
-            'slug'      => '',
-            'timeOfDay' => ''
-        ];
-        $this->sendPayload($payload);
     }
 
     private function resolveExistingBackground(string $baseName, string $tod): string
@@ -774,17 +744,46 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             return;
         }
         if ($Message === VM_UPDATE) {
+            // Symcon meldet jede Aktualisierung, auch ohne neuen Wert: dann bleibt die Kachel, wie sie ist
             $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
-            if ($temperatureVarId > 0 && $SenderID === $temperatureVarId) {
+            if ($temperatureVarId > 0 && $SenderID === $temperatureVarId && self::valueChanged($Data)) {
                 $this->sendTemperatureUpdate();
             }
         }
         if ($Message === MM_UPDATE) {
+            // Neuer Inhalt ergibt eine neue Bildadresse; unveraendert geht die Nachricht kein zweites Mal hinaus
             $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
             if ($customMediaId > 0 && $SenderID === $customMediaId) {
-                $this->sendCustomImageUpdate();
+                $this->sendImageUpdate();
             }
         }
+    }
+
+    // $Data[1] meldet bei VM_UPDATE, ob sich der Wert geaendert hat. Fehlt die Angabe (anderes Format), wird
+    // gesendet: lieber eine Nachricht zu viel als eine verschluckte.
+    private static function valueChanged(array $Data): bool
+    {
+        return !isset($Data[1]) || $Data[1] === true;
+    }
+
+    // Schickt eine Nachricht nur, wenn sie sich von der zuletzt unter diesem Schluessel gesendeten unterscheidet.
+    // Pruefwerte (md5) im Puffer UpdateHashes; ApplyChanges und der Erstaufbau einer Kachel leeren ihn.
+    private function sendUpdateIfChanged(string $key, array $payload): void
+    {
+        $json = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($json === false) {
+            $this->SendDebug('Payload', 'JSON encoding failed: ' . json_last_error_msg(), 0);
+            return;
+        }
+        $hashes = json_decode($this->GetBuffer('UpdateHashes'), true);
+        $hashes = is_array($hashes) ? $hashes : [];
+        $hash = md5($json);
+        if (($hashes[$key] ?? null) === $hash) {
+            return;
+        }
+        $this->UpdateVisualizationValue($json);
+        $hashes[$key] = $hash;
+        $this->SetBuffer('UpdateHashes', (string)json_encode($hashes));
     }
 
     
@@ -821,7 +820,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             'dateScaleFactor'      => $ds,
             'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast')
         ];
-        $this->sendPayload($payload);
+        $this->sendUpdateIfChanged('temperature', $payload);
     }
 
     private function getTemperaturePayload(): array
@@ -1334,37 +1333,6 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             default:
                 return ['overcast', 'cloudy'];
         }
-    }
-
-    private function sendForecastUpdate(): void
-    {
-        if (!(bool)$this->ReadPropertyBoolean('ShowWeather')) {
-            return;
-        }
-        $showForecast = (bool)$this->ReadPropertyBoolean('ShowForecast');
-        $forecast = $this->getForecastPayload();
-        $this->SendDebug('Forecast', 'Sending ' . count($forecast) . ' items (showForecast=' . ($showForecast ? 'true' : 'false') . ')', 0);
-        $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
-        $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
-        $cv = (int)$this->ReadPropertyInteger('ClockVerticalPercent');
-        if ($cv < 0) { $cv = 0; }
-        if ($cv > 100) { $cv = 100; }
-        $df = (int)$this->ReadPropertyInteger('DateFontSizePx');
-        if ($df < 0) { $df = 0; }
-        if ($df > 200) { $df = 200; }
-        $payload = [
-            'type' => 'forecast',
-            'forecast' => $forecast,
-            'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
-            'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
-            'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
-            'forecastWidthPercent' => $fw,
-            'clockWidthPercent'    => $cw,
-            'clockVerticalPercent' => $cv,
-            'dateFontSizePx'       => $df,
-            'showForecast'         => $showForecast
-        ];
-        $this->sendPayload($payload);
     }
 
     
