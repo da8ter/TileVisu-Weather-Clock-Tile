@@ -9,6 +9,13 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
     private const HOOK_PATH = 'wetterbilder/';
     // Ident des Skripts, das Versionen bis Oktober 2025 als Ziel des WebHook-Eintrags unter der Instanz anlegten
     private const LEGACY_HOOK_SCRIPT_IDENT = 'HookScript';
+    // Was der Hook ausliefert: Wetterbilder (Endung => Typ), Meteocons unter assets/icons und die FlipClock-Dateien
+    private const BACKGROUND_TYPES = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'];
+    private const ICON_TYPES = ['webp' => 'image/webp', 'gif' => 'image/gif', 'png' => 'image/png', 'svg' => 'image/svg+xml'];
+    private const FLIPCLOCK_FILES = ['flipclock.min.css' => 'text/css', 'flipclock.min.js' => 'application/javascript'];
+    // Erlaubte Angaben: Wetterbild ohne Endung, Symbol als Pfad unter assets/icons - andere Zeichen und .. nie
+    private const BACKGROUND_NAME_PATTERN = '~\A[a-z0-9-]+\z~';
+    private const ICON_PATH_PATTERN = '~\A(?:(?:full|outline)/)?(?:animated|static)/[a-z0-9-]+\.(webp|gif|png|svg)\z~';
 
     public function Create(): void
     {
@@ -66,126 +73,56 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         parent::Destroy();
     }
     
+    // /hook/wetterbilder/<ID>?<Datei>&v=<Version>&token=<Token>. Datei: name=<Wetterbild> (auch slug+tod, ohne
+    // Angabe das aktuelle), icon=<Pfad unter assets/icons>, asset=<FlipClock-Datei> oder custom=1 (eigenes Bild).
+    // Ohne gueltiges Token 403; Unbekanntes, Pfadangaben und Dateien ueber der Ausgabegrenze 404.
     // Symcon ruft Hooks ueber einen Aufsatz der Modulklasse auf; bei IPSModuleStrict mit ": void"
     protected function ProcessHookData(): void
     {
-        $baseDir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'wetterbilder';
-        $assetDir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'flipclock';
-
-        $tok = isset($_GET['token']) ? (string)$_GET['token'] : '';
-        if ($tok === '' || $tok !== $this->getWebhookToken()) {
-            http_response_code(403);
-            echo 'forbidden';
+        $token = $this->hookToken();
+        $given = isset($_GET['token']) && is_string($_GET['token']) ? $_GET['token'] : '';
+        if ($token === '' || !hash_equals($token, $given)) {
+            $this->SendStatus(403);
             return;
         }
-
-        if (isset($_GET['asset']) && is_string($_GET['asset'])) {
-            $allowed = ['flipclock.min.js', 'flipclock.min.css'];
-            $asset = basename($_GET['asset']);
-            if (in_array($asset, $allowed, true)) {
-                $path = rtrim($assetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $asset;
-                if (@is_file($path)) {
-                    if (substr($asset, -3) === '.js') {
-                        header('Content-Type: application/javascript; charset=utf-8');
-                    } elseif (substr($asset, -4) === '.css') {
-                        header('Content-Type: text/css; charset=utf-8');
-                    } else {
-                        header('Content-Type: application/octet-stream');
-                    }
-                    header('Cache-Control: public, max-age=86400');
-                    header('Pragma: cache');
-                    readfile($path);
-                    return;
-                }
-            }
-            http_response_code(404);
-            echo 'asset not found';
+        $resource = $this->hookResource($_GET);
+        // Die Grenze muss vor der Ausgabe greifen, sonst ersetzt Symcon die ganze Antwort durch einen Fehlertext
+        if ($resource === null || $resource['size'] > $this->hookBodyLimit()) {
+            $this->SendStatus(404);
             return;
         }
-
-        $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
-        $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
-        $useCustom = (!$showWeather) && ($customMediaId > 0);
-        if (isset($_GET['custom'])) {
-            $useCustom = true;
-        }
-        if ($useCustom) {
-            $b64 = @IPS_GetMediaContent($customMediaId);
-            if (is_string($b64) && $b64 !== '') {
-                $bin = @base64_decode($b64, true);
-                if ($bin !== false && $bin !== '') {
-                    $mime = 'image/jpeg';
-                    if (strlen($bin) >= 12) {
-                        $h = substr($bin, 0, 12);
-                        if (strncmp($h, "\xFF\xD8\xFF", 3) === 0) {
-                            $mime = 'image/jpeg';
-                        } elseif (strncmp($h, "\x89PNG\x0D\x0A\x1A\x0A", 8) === 0) {
-                            $mime = 'image/png';
-                        } elseif (strncmp($h, 'GIF87a', 6) === 0 || strncmp($h, 'GIF89a', 6) === 0) {
-                            $mime = 'image/gif';
-                        } elseif (substr($h, 0, 4) === 'RIFF' && substr($h, 8, 4) === 'WEBP') {
-                            $mime = 'image/webp';
-                        }
-                    }
-                    header('Content-Type: ' . $mime);
-                    header('Cache-Control: public, max-age=86400');
-                    header('Content-Length: ' . strlen($bin));
-                    echo $bin;
-                    return;
-                }
-            }
-            http_response_code(404);
-            echo 'Kein Bild verfügbar';
+        $version = $resource['version'];
+        $current = isset($_GET['v']) && $_GET['v'] === $version;
+        // Nur die passende Version darf lange gecacht werden, eine alte Adresse bekommt den neuen Inhalt ungecacht.
+        // Mitgelieferte Dateien sind oeffentlich, das eigene Hintergrundbild bleibt privat.
+        $scope = $resource['public'] ? 'public' : 'private';
+        $this->SendHeader('Cache-Control: ' . ($current ? $scope . ', max-age=31536000, immutable' : 'no-cache'));
+        $this->SendHeader('ETag: "' . $version . '"');
+        $this->SendHeader('X-Content-Type-Options: nosniff');
+        if ($current && trim((string) ($_SERVER['HTTP_IF_NONE_MATCH'] ?? '')) === '"' . $version . '"') {
+            $this->SendStatus(304);
             return;
         }
-
-        $name = '';
-        if (isset($_GET['name']) && is_string($_GET['name'])) {
-            $name = strtolower(trim($_GET['name']));
-        } else {
-            $slug = isset($_GET['slug']) ? strtolower(trim((string)$_GET['slug'])) : '';
-            $tod  = isset($_GET['tod'])  ? strtolower(trim((string)$_GET['tod']))  : '';
-            if ($slug !== '' && ($tod === 'day' || $tod === 'night')) {
-                $name = $slug . '-' . $tod;
-            }
-        }
-        if ($name === '') {
-            $name = $this->currentBackgroundName();
-        }
-        if ($name === '') {
-            http_response_code(404);
-            echo 'Kein Bild verfügbar';
+        $bytes = $resource['bytes'] ?? @file_get_contents($resource['path']);
+        if (!is_string($bytes)) {
+            $this->SendStatus(500);
             return;
         }
+        $mime = $resource['mime'];
+        $this->SendHeader('Content-Type: ' . (in_array($mime, self::FLIPCLOCK_FILES, true) ? $mime . '; charset=utf-8' : $mime));
+        $this->SendHeader('Content-Length: ' . strlen($bytes));
+        echo $bytes;
+    }
 
-        $exts = ['jpg','jpeg','png','webp'];
-        foreach ($exts as $ext) {
-            $basePath = rtrim($baseDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
-            $candidates = [
-                $basePath . $name . '-min.' . $ext,
-                $basePath . $name . '.' . $ext,
-            ];
-            foreach ($candidates as $file) {
-                if (@is_file($file)) {
-                    $ct = 'image/jpeg';
-                    if ($ext === 'png') {
-                        $ct = 'image/png';
-                    } elseif ($ext === 'webp') {
-                        $ct = 'image/webp';
-                    }
-                    $bin = @file_get_contents($file);
-                    if ($bin !== false) {
-                        header('Content-Type: ' . $ct);
-                        header('Cache-Control: public, max-age=86400');
-                        header('Content-Length: ' . strlen($bin));
-                        echo $bin;
-                        return;
-                    }
-                }
-            }
-        }
-        http_response_code(404);
-        echo 'Kein Bild verfügbar';
+    // Eigene Methoden fuer Kopfzeilen und Status, damit die Tests den Hook ohne Webserver pruefen koennen
+    protected function SendHeader(string $header): void
+    {
+        header($header);
+    }
+
+    protected function SendStatus(int $code): void
+    {
+        http_response_code($code);
     }
 
     public function ApplyChanges(): void
@@ -199,7 +136,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             return;
         }
 
-        $this->getWebhookToken();
+        $this->ensureHookToken();
         $this->removeLegacyHookScript();
 
         $this->MaintainVariable('OpenMeteoRaw', $this->Translate('Open-Meteo weather data'), VARIABLETYPE_STRING, '', 0, (bool)$this->ReadPropertyBoolean('StoreWeatherData'));
@@ -287,15 +224,15 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
 
     // ----------------------------- Helpers -----------------------------
 
-    // Aktueller Basisname des Wetterbilds (slug-day|night) fuer Hook-Anfragen ohne Namen; '' ohne Stand
+    // Aktuelles Wetterbild (slug-day|night, mit Rueckfall wie in der Kachel) fuer Hook-Anfragen ohne Namen
     private function currentBackgroundName(): string
     {
         $slug = strtolower(trim($this->ReadAttributeString('LastSlug')));
         $tod = strtolower(trim($this->ReadAttributeString('LastTimeOfDay')));
-        if ($slug !== '' && ($tod === 'day' || $tod === 'night')) {
-            return $slug . '-' . $tod;
+        if ($slug === '' || ($tod !== 'day' && $tod !== 'night')) {
+            return '';
         }
-        return '';
+        return $this->resolveExistingBackground($slug . '-' . $tod, $tod);
     }
 
     // Versionen bis Oktober 2025 legten unter der Instanz ein verstecktes Skript als Ziel des WebHook-Eintrags an
@@ -318,25 +255,210 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         }
     }
 
-    private function getWebhookToken(): string
+    private function imageHookActive(): bool
     {
-        $token = (string)$this->ReadAttributeString('WebhookToken');
-        if ($token === '') {
-            try {
-                $token = bin2hex(random_bytes(16));
-            } catch (\Throwable $e) {
-                $token = bin2hex(openssl_random_pseudo_bytes(16));
-            }
-            $this->WriteAttributeString('WebhookToken', $token);
+        return $this->GetBuffer('ImageHook') === '1';
+    }
+
+    // Token der Hook-Adressen; '' solange der Hook in diesem Kernel-Lauf nicht registriert ist
+    private function hookToken(): string
+    {
+        return $this->imageHookActive() ? $this->ReadAttributeString('WebhookToken') : '';
+    }
+
+    // Einmal erzeugt und behalten (Attribut WebhookToken wie bisher): bestehende Adressen bleiben gueltig
+    private function ensureHookToken(): void
+    {
+        if ($this->imageHookActive() && $this->ReadAttributeString('WebhookToken') === '') {
+            $this->WriteAttributeString('WebhookToken', bin2hex(random_bytes(16)));
         }
-        return $token;
+    }
+
+    // Groesste Antwort, die Symcon unveraendert ausliefert (ScriptOutputBufferLimit, ab Werk 1 MiB), mit Reserve
+    private function hookBodyLimit(): int
+    {
+        $limit = 1048576;
+        try {
+            $option = IPS_GetOption('ScriptOutputBufferLimit');
+            if (is_numeric($option) && (int) $option > 0) {
+                $limit = (int) $option;
+            }
+        } catch (\Throwable $e) {
+            $this->SendDebug('Hook', 'ScriptOutputBufferLimit: ' . $e->getMessage(), 0);
+        }
+        return max(0, $limit - 1024);
+    }
+
+    // Datei bzw. Bild zu einer Hook-Anfrage, null fuer Unbekanntes
+    private function hookResource(array $query): ?array
+    {
+        if (isset($query['asset'])) {
+            $file = is_string($query['asset']) ? $query['asset'] : '';
+            return isset(self::FLIPCLOCK_FILES[$file]) ? $this->fileResource('assets/flipclock/' . $file, self::FLIPCLOCK_FILES[$file]) : null;
+        }
+        if (isset($query['icon'])) {
+            $icon = is_string($query['icon']) ? $query['icon'] : '';
+            return preg_match(self::ICON_PATH_PATTERN, $icon, $match) === 1
+                ? $this->fileResource('assets/icons/' . $icon, self::ICON_TYPES[$match[1]]) : null;
+        }
+        if (isset($query['custom'])) {
+            $image = $this->customImage();
+            $bytes = $image === null ? false : base64_decode($image['base64'], true);
+            return is_string($bytes) && $bytes !== ''
+                ? ['bytes' => $bytes, 'size' => strlen($bytes), 'mime' => $image['mime'], 'version' => $image['version'], 'public' => false]
+                : null;
+        }
+        $name = $this->requestedBackgroundName($query);
+        $file = $name === '' ? null : $this->backgroundFile($name);
+        return $file === null ? null : $this->fileResource($file[0], $file[1]);
+    }
+
+    // Wetterbild einer Anfrage: name, sonst slug+tod, sonst das aktuelle; '' fuer alles ausser [a-z0-9-]
+    private function requestedBackgroundName(array $query): string
+    {
+        $name = '';
+        if (isset($query['name'])) {
+            if (!is_string($query['name'])) {
+                return '';
+            }
+            $name = strtolower(trim($query['name']));
+        } else {
+            $slug = isset($query['slug']) && is_string($query['slug']) ? strtolower(trim($query['slug'])) : '';
+            $tod = isset($query['tod']) && is_string($query['tod']) ? strtolower(trim($query['tod'])) : '';
+            if ($slug !== '' && ($tod === 'day' || $tod === 'night')) {
+                $name = $slug . '-' . $tod;
+            }
+        }
+        if ($name === '') {
+            $name = $this->currentBackgroundName();
+        }
+        return preg_match(self::BACKGROUND_NAME_PATTERN, $name) === 1 ? $name : '';
+    }
+
+    // Mitgelieferte Datei als Hook-Antwort (oeffentlich, Inhaltsversion), null wenn sie fehlt
+    private function fileResource(string $relPath, string $mime): ?array
+    {
+        $path = $this->assetPath($relPath);
+        if ($path === null) {
+            return null;
+        }
+        return ['path' => $path, 'size' => (int) filesize($path), 'mime' => $mime, 'version' => $this->fileVersion($relPath, $path), 'public' => true];
+    }
+
+    // Pfad einer mitgelieferten Datei unter assets/, null wenn sie fehlt oder ausserhalb von assets/ laege
+    private function assetPath(string $relPath): ?string
+    {
+        $base = realpath(__DIR__ . '/assets');
+        $path = realpath(__DIR__ . '/' . $relPath);
+        if ($base === false || $path === false || !str_starts_with($path, $base . DIRECTORY_SEPARATOR) || !is_file($path)) {
+            return null;
+        }
+        return $path;
+    }
+
+    // Inhaltsversion einer mitgelieferten Datei: 16 Zeichen ihres SHA-256. Je Datei im Puffer AssetVersions mit
+    // Stempel aus Groesse und Aenderungszeit, damit die Bilder nicht bei jedem Aufbau neu gelesen werden.
+    private function fileVersion(string $relPath, string $path): string
+    {
+        $stamp = filesize($path) . '-' . filemtime($path);
+        $versions = json_decode($this->GetBuffer('AssetVersions'), true);
+        $versions = is_array($versions) ? $versions : [];
+        $cached = $versions[$relPath] ?? null;
+        if (is_array($cached) && ($cached[0] ?? null) === $stamp && is_string($cached[1] ?? null)) {
+            return $cached[1];
+        }
+        $hash = hash_file('sha256', $path);
+        $version = substr(is_string($hash) ? $hash : hash('sha256', $relPath . $stamp), 0, 16);
+        $versions[$relPath] = [$stamp, $version];
+        $this->SetBuffer('AssetVersions', (string) json_encode($versions, JSON_UNESCAPED_SLASHES));
+        return $version;
+    }
+
+    // Hook-Adresse einer mitgelieferten Datei, ohne Hook oder ueber der Ausgabegrenze die Data-URI wie frueher;
+    // '' ohne Datei. Die Adresse traegt die Inhaltsversion: neuer Inhalt, neue Adresse, der Browser darf lange cachen.
+    private function fileSource(string $param, string $value, string $relPath, string $mime): string
+    {
+        $path = $this->assetPath($relPath);
+        if ($path === null) {
+            return '';
+        }
+        $token = $this->hookToken();
+        if ($token !== '' && filesize($path) <= $this->hookBodyLimit()) {
+            return $this->hookUrl([$param => $value], $this->fileVersion($relPath, $path), $token);
+        }
+        $bytes = file_get_contents($path);
+        return $bytes === false ? '' : 'data:' . $mime . ';base64,' . base64_encode($bytes);
+    }
+
+    private function hookUrl(array $query, string $version, string $token): string
+    {
+        return '/hook/' . self::HOOK_PATH . $this->InstanceID . '?'
+            . http_build_query($query + ['v' => $version, 'token' => $token], '', '&', PHP_QUERY_RFC3986);
+    }
+
+    // Die beiden FlipClock-Dateien fuer die Kachel (Hook-Adressen bzw. Data-URIs)
+    private function flipClockSources(): array
+    {
+        $sources = [];
+        foreach (self::FLIPCLOCK_FILES as $file => $mime) {
+            $sources[$file === 'flipclock.min.css' ? 'css' : 'js'] = $this->fileSource('asset', $file, 'assets/flipclock/' . $file, $mime);
+        }
+        return $sources;
+    }
+
+    // Eigenes Hintergrundbild: nur das konfigurierte Medienobjekt mit Inhalt, sonst null
+    private function customImage(): ?array
+    {
+        $mediaId = $this->ReadPropertyInteger('CustomMediaID');
+        if ($mediaId <= 0 || !IPS_MediaExists($mediaId)) {
+            return null;
+        }
+        $base64 = @IPS_GetMediaContent($mediaId);
+        if (!is_string($base64) || $base64 === '') {
+            return null;
+        }
+        // 16 Zeichen Base64 = die 12 Bytes, an denen der Bildtyp erkannt wird
+        $head = base64_decode(substr($base64, 0, 16), true);
+        $padding = str_ends_with($base64, '==') ? 2 : (str_ends_with($base64, '=') ? 1 : 0);
+        return [
+            'base64'  => $base64,
+            'size'    => intdiv(strlen($base64), 4) * 3 - $padding,
+            'mime'    => $this->detectImageMime(is_string($head) ? $head : ''),
+            'version' => substr(hash('sha256', $base64), 0, 16),
+        ];
+    }
+
+    // Hook-Adresse des eigenen Bilds (neuer Inhalt, neue Adresse), sonst Data-URI; '' ohne Bild
+    private function customImageSource(): string
+    {
+        $image = $this->customImage();
+        if ($image === null) {
+            return '';
+        }
+        $token = $this->hookToken();
+        if ($token !== '' && $image['size'] <= $this->hookBodyLimit()) {
+            return $this->hookUrl(['custom' => '1'], $image['version'], $token);
+        }
+        return 'data:' . $image['mime'] . ';base64,' . $image['base64'];
+    }
+
+    private function detectImageMime(string $head): string
+    {
+        if (strncmp($head, "\x89PNG\x0D\x0A\x1A\x0A", 8) === 0) {
+            return 'image/png';
+        }
+        if (strncmp($head, 'GIF87a', 6) === 0 || strncmp($head, 'GIF89a', 6) === 0) {
+            return 'image/gif';
+        }
+        if (substr($head, 0, 4) === 'RIFF' && substr($head, 8, 4) === 'WEBP') {
+            return 'image/webp';
+        }
+        return 'image/jpeg';
     }
     
 
     private function buildVisualizationPayload(string $url, string $slug, string $tod): array
     {
-        $ts = time();
-        $assetBase = '/hook/wetterbilder/' . $this->InstanceID;
         // Clamp width percentages to [5..100]
         $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
         $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
@@ -357,21 +479,19 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             'url'       => $url,
             'slug'      => $slug,
             'timeOfDay' => $tod,
-            'ts'        => $ts,
             'temperature' => $this->getTemperaturePayload(),
             'forecast'    => $this->getForecastPayload(),
             'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
             'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
             'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
             'showSeconds' => (bool)$this->ReadPropertyBoolean('ShowSeconds'),
-            'assetBase'   => $assetBase,
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
             'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
             'dateScaleFactor'      => $ds,
             'showForecast'         => $showForecast,
-            'token'                => $this->getWebhookToken()
+            'flipclock'            => $this->flipClockSources()
         ];
     }
 
@@ -379,8 +499,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
     {
         $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
         $showClock   = (bool)$this->ReadPropertyBoolean('ShowClock');
-        $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
-        $hasCustom = $this->mediaHasContent($customMediaId);
+        $hasCustom = $this->customImage() !== null;
         // Clamp width percentages to [5..100]
         $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
         $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
@@ -393,16 +512,12 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
 
         // If weather display is disabled: optionally show custom media image; no weather details
         if (!$showWeather) {
-            $url = '';
-            if ($hasCustom) {
-                $url = '/hook/wetterbilder/' . $this->InstanceID . '?custom=1&token=' . rawurlencode($this->getWebhookToken());
-            }
+            $url = $this->customImageSource();
             $payload = [
                 'type'        => 'image',
                 'url'         => $url,
                 'slug'        => '',
                 'timeOfDay'   => '',
-                'ts'          => time(),
                 'wmoCode'     => null,
                 'imageName'   => '',
                 'temperature' => null,
@@ -411,14 +526,13 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
                 'showClock'   => $showClock,
                 'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
                 'showSeconds' => (bool)$this->ReadPropertyBoolean('ShowSeconds'),
-                'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
                 'forecastWidthPercent' => $fw,
                 'clockWidthPercent'    => $cw,
                 'clockVerticalPercent' => $cv,
                 'dateFontSizePx'       => $df,
                 'dateScaleFactor'      => max(1, min(5, (int)$this->ReadPropertyInteger('DateScaleFactor'))),
                 'showForecast'         => false,
-                'token'                => $this->getWebhookToken()
+                'flipclock'            => $this->flipClockSources()
             ];
             $this->sendPayload($payload);
             $this->updateCurrentImageUrl($url);
@@ -427,7 +541,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
 
         // If a custom media is configured and has content, prefer it as background even when weather is enabled
         if ($hasCustom) {
-            $url = '/hook/wetterbilder/' . $this->InstanceID . '?custom=1&token=' . rawurlencode($this->getWebhookToken());
+            $url = $this->customImageSource();
             $payload = $this->buildVisualizationPayload($url, '', '');
             $payload['wmoCode'] = null;
             $payload['imageName'] = 'custom';
@@ -473,7 +587,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         } else {
             $this->SendDebug('Image', 'Using background ' . $baseName, 0);
         }
-        $webhookUrl = '/hook/wetterbilder/' . $this->InstanceID . '?name=' . rawurlencode($baseName) . '&token=' . rawurlencode($this->getWebhookToken());
+        $webhookUrl = $this->backgroundSource($baseName);
 
         $payload = $this->buildVisualizationPayload($webhookUrl, $slug, $tod);
         $payload['wmoCode'] = $wmoCode;
@@ -501,68 +615,58 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         }
         $varId = @$this->GetIDForIdent('CurrentImageUrl');
         if ($varId > 0) {
-            @SetValue($varId, $url);
+            // Eine eingebettete Data-URI (ohne Hook) gehoert nicht in eine Variable
+            @SetValue($varId, str_starts_with($url, 'data:') ? '' : $url);
         }
-    }
-
-    private function mediaHasContent(int $mediaId): bool
-    {
-        if ($mediaId <= 0) {
-            return false;
-        }
-        if (function_exists('IPS_MediaExists') && !@IPS_MediaExists($mediaId)) {
-            return false;
-        }
-        $b64 = @IPS_GetMediaContent($mediaId);
-        return is_string($b64) && $b64 !== '';
     }
 
     private function sendCustomImageUpdate(): void
     {
-        $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
-        if (!$this->mediaHasContent($customMediaId)) {
+        $url = $this->customImageSource();
+        if ($url === '') {
             return;
         }
-        $assetBase = '/hook/wetterbilder/' . $this->InstanceID;
-        $url = $assetBase . '?custom=1&token=' . rawurlencode($this->getWebhookToken());
         $payload = [
             'type'      => 'image',
             'url'       => $url,
             'slug'      => '',
-            'timeOfDay' => '',
-            'ts'        => time(),
-            'assetBase' => $assetBase
+            'timeOfDay' => ''
         ];
         $this->sendPayload($payload);
     }
 
     private function resolveExistingBackground(string $baseName, string $tod): string
     {
-        $dir = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'wetterbilder' . DIRECTORY_SEPARATOR;
-        $exts = ['jpg','jpeg','png','webp'];
-        $candidates = function(string $name) use ($exts, $dir): array {
-            $items = [];
-            foreach ($exts as $e) {
-                $items[] = $dir . $name . '-min.' . $e;
-                $items[] = $dir . $name . '.' . $e;
+        // 1) given name, 2) hazy-<tod>, 3) generic sunny/clear
+        foreach ([$baseName, 'hazy-' . $tod, ($tod === 'day') ? 'sunny-day' : 'clear-sky-night'] as $name) {
+            if ($this->backgroundFile($name) !== null) {
+                return $name;
             }
-            return $items;
-        };
-        // 1) given name
-        foreach ($candidates($baseName) as $f) {
-            if (@is_file($f)) return $baseName;
-        }
-        // 2) hazy-<tod>
-        $hazy = 'hazy-' . $tod;
-        foreach ($candidates($hazy) as $f) {
-            if (@is_file($f)) return $hazy;
-        }
-        // 3) generic sunny/clear
-        $generic = ($tod === 'day') ? 'sunny-day' : 'clear-sky-night';
-        foreach ($candidates($generic) as $f) {
-            if (@is_file($f)) return $generic;
         }
         return $baseName; // give original back; webhook may still handle
+    }
+
+    // Datei eines Wetterbilds: [Pfad relativ zum Modul, Bildtyp] der ersten vorhandenen Variante, sonst null
+    private function backgroundFile(string $name): ?array
+    {
+        if (preg_match(self::BACKGROUND_NAME_PATTERN, $name) !== 1) {
+            return null;
+        }
+        foreach (self::BACKGROUND_TYPES as $ext => $mime) {
+            foreach ([$name . '-min.' . $ext, $name . '.' . $ext] as $file) {
+                if (is_file(__DIR__ . '/assets/wetterbilder/' . $file)) {
+                    return ['assets/wetterbilder/' . $file, $mime];
+                }
+            }
+        }
+        return null;
+    }
+
+    // Adresse eines Wetterbilds fuer die Kachel (Hook oder Data-URI), '' ohne Datei
+    private function backgroundSource(string $name): string
+    {
+        $file = $this->backgroundFile($name);
+        return $file === null ? '' : $this->fileSource('name', $name, $file[0], $file[1]);
     }
 
     private function mapIconToG5(int|string $iconCode, ?string $dayOrNight = null): string
@@ -671,19 +775,16 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         $payload = [
             'type' => 'temperature',
             'temperature' => $this->getTemperaturePayload(),
-            'ts' => time(),
             'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
             'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
             'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
             'showSeconds' => (bool)$this->ReadPropertyBoolean('ShowSeconds'),
-            'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
             'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
             'dateScaleFactor'      => $ds,
-            'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast'),
-            'token'                => $this->getWebhookToken()
+            'showForecast'         => (bool)$this->ReadPropertyBoolean('ShowForecast')
         ];
         $this->sendPayload($payload);
     }
@@ -716,8 +817,8 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             if (isset($data['current']['is_day'])) {
                 $isDay = ((int)$data['current']['is_day'] === 1);
             }
-            $uri = $this->getWUIconDataURI($code, $isDay);
-            if (is_string($uri) && $uri !== '') {
+            $uri = $this->iconSource($code, $isDay ?? $this->isDayByClock());
+            if ($uri !== '') {
                 $result['iconUrl'] = $uri;
             }
         }
@@ -745,8 +846,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             $isDayNow = ((int)$data['current']['is_day'] === 1);
         }
         if ($isDayNow === null) {
-            $h = (int)date('G');
-            $isDayNow = ($h >= 6 && $h < 20);
+            $isDayNow = $this->isDayByClock();
         }
 
         $count = min(4, count($times), count($codes), count($tMax), count($tMin));
@@ -757,7 +857,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             $min   = is_numeric($tMin[$i] ?? null) ? (int)round($tMin[$i]) : null;
             $code  = (int)($codes[$i] ?? 0);
             // Use OpenMeteo WMO code directly for icon filename with current day/night variant
-            $iconUrl = $this->getWUIconDataURI($code, $isDayNow);
+            $iconUrl = $this->iconSource($code, $isDayNow);
             $out[] = [
                 'label' => $label,
                 'max' => $max,
@@ -1026,88 +1126,49 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         return (string)round($t) . "°C";
     }
 
-    private function getWUIconDataURI(int $code, ?bool $isDay = null): string
+    // Tag oder Nacht nach der Uhrzeit, wenn Open-Meteo kein is_day liefert
+    private function isDayByClock(): bool
     {
-        $root = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'icons' . DIRECTORY_SEPARATOR;
-        $useAnimated = (bool)$this->ReadPropertyBoolean('UseAnimatedIcons');
-        $useOutline = $this->ReadPropertyBoolean('UseOutlineIcons');
-        $styleDir = $useOutline ? 'full' : 'outline';
-        $dirs = [
-            $styleDir . DIRECTORY_SEPARATOR . ($useAnimated ? 'animated' : 'static'),
-            ($useAnimated ? 'animated' : 'static')
-        ];
-        $exts = ['webp', 'gif', 'png', 'svg'];
+        $h = (int)date('G');
+        return $h >= 6 && $h < 20;
+    }
 
-        $mimeFor = function(string $ext): string {
-            switch (strtolower($ext)) {
-                case 'webp': return 'image/webp';
-                case 'gif':  return 'image/gif';
-                case 'png':  return 'image/png';
-                case 'svg':  return 'image/svg+xml';
-            }
-            return 'application/octet-stream';
-        };
-
-        $readFileAsDataUri = function(string $path) use ($mimeFor): string {
-            $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-            $mime = $mimeFor($ext);
-            $data = @file_get_contents($path);
-            if ($data === false) {
-                return '';
-            }
-            return 'data:' . $mime . ';base64,' . base64_encode($data);
-        };
-
-        // Determine day/night if not provided
-        if ($isDay === null) {
-            $cur = $this->fetchOpenMeteo();
-            $dflag = null;
-            if (is_array($cur) && isset($cur['current']) && is_array($cur['current']) && isset($cur['current']['is_day'])) {
-                $dflag = ((int)$cur['current']['is_day'] === 1);
-            }
-            if ($dflag === null) {
-                $h = (int)date('G');
-                $dflag = ($h >= 6 && $h < 20);
-            }
-            $isDay = $dflag;
+    // Symbol zum WMO-Code: Hook-Adresse bzw. Data-URI der ersten vorhandenen Datei, '' ohne Treffer
+    private function iconSource(int $code, bool $isDay): string
+    {
+        $relPath = $this->iconFile($code, $isDay);
+        if ($relPath === null) {
+            return '';
         }
+        $ext = strtolower(pathinfo($relPath, PATHINFO_EXTENSION));
+        return $this->fileSource('icon', substr($relPath, strlen('assets/icons/')), $relPath, self::ICON_TYPES[$ext]);
+    }
 
-        // Build candidate basenames for this WMO code; prefer descriptive slugs to keep existing filenames
-        $basenames = $this->mapWMOToIconBasenames($code, (bool)$isDay);
-        foreach ($dirs as $sub) {
-            $base = rtrim($root . ($sub !== '' ? $sub . DIRECTORY_SEPARATOR : ''), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
-            // 1) Try descriptive basenames (existing icon sets)
-            foreach ($basenames as $bn) {
-                foreach ($exts as $ext) {
-                    $candidate = $base . $bn . '.' . $ext;
-                    if (@is_file($candidate)) {
-                        $uri = $readFileAsDataUri($candidate);
-                        if ($uri !== '') return $uri;
+    // Symboldatei (Pfad relativ zum Modul): beschreibende Namen, dann der Zahlencode, je Ordner; zuletzt overcast/cloudy
+    private function iconFile(int $code, bool $isDay): ?string
+    {
+        $variant = $this->ReadPropertyBoolean('UseAnimatedIcons') ? 'animated' : 'static';
+        // Bisherige Zuordnung: UseOutlineIcons waehlt den Ordner "full"
+        $style = $this->ReadPropertyBoolean('UseOutlineIcons') ? 'full' : 'outline';
+        $dirs = [$style . '/' . $variant, $variant];
+        $find = static function (string $dir, array $names): ?string {
+            foreach ($names as $name) {
+                foreach (array_keys(self::ICON_TYPES) as $ext) {
+                    $relPath = 'assets/icons/' . $dir . '/' . $name . '.' . $ext;
+                    if (is_file(__DIR__ . '/' . $relPath)) {
+                        return $relPath;
                     }
                 }
             }
-            // 2) Try numeric filename (optional future support)
-            foreach ($exts as $ext) {
-                $candidate = $base . $code . '.' . $ext;
-                if (@is_file($candidate)) {
-                    $uri = $readFileAsDataUri($candidate);
-                    if ($uri !== '') return $uri;
-                }
+            return null;
+        };
+        foreach ($dirs as $dir) {
+            $relPath = $find($dir, [...$this->mapWMOToIconBasenames($code, $isDay), (string) $code]);
+            if ($relPath !== null) {
+                return $relPath;
             }
         }
-        // Fallback to a generic icon present in the new sets
-        $sub = $dirs[0];
-        $base = rtrim($root . ($sub !== '' ? $sub . DIRECTORY_SEPARATOR : ''), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
-        foreach (['overcast', 'cloudy'] as $bn) {
-            foreach ($exts as $ext) {
-                $candidate = $base . $bn . '.' . $ext;
-                if (@is_file($candidate)) {
-                    $uri = $readFileAsDataUri($candidate);
-                    if ($uri !== '') return $uri;
-                }
-            }
-        }
-        return '';
+        return $find($dirs[0], ['overcast', 'cloudy']);
     }
 
     private function mapWMOToIconBasenames(int $code, bool $assumeDay): array
@@ -1200,17 +1261,14 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         $payload = [
             'type' => 'forecast',
             'forecast' => $forecast,
-            'ts' => time(),
             'showWeather' => (bool)$this->ReadPropertyBoolean('ShowWeather'),
             'showClock'   => (bool)$this->ReadPropertyBoolean('ShowClock'),
             'showDate'    => (bool)$this->ReadPropertyBoolean('ShowDate'),
-            'assetBase'   => '/hook/wetterbilder/' . $this->InstanceID,
             'forecastWidthPercent' => $fw,
             'clockWidthPercent'    => $cw,
             'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
-            'showForecast'         => $showForecast,
-            'token'                => $this->getWebhookToken()
+            'showForecast'         => $showForecast
         ];
         $this->sendPayload($payload);
     }

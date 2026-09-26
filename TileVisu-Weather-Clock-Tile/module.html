@@ -362,82 +362,32 @@
     let lastShowClock = null;
     let lastShowDate = null;
     let lastShowForecast = null;
-    let webhookToken = "";
     let showSeconds = false;
     let lastShowSeconds = null;
-    
+    // Zuletzt gezeigtes Hintergrundbild: dieselbe (versionierte) Adresse wird nicht neu geladen
+    let currentImageUrl = '';
 
-    function injectStyle(targetId, base64) {
-      const styleEl = document.getElementById(targetId);
-      if (!styleEl) {
-        return;
-      }
-      styleEl.textContent = atob(base64);
-    }
-
-    function injectScript(base64) {
-      const script = document.createElement('script');
-      script.type = 'text/javascript';
-      script.text = atob(base64);
-      document.head.appendChild(script);
-    }
-
-    // FlipClock Assets via WebHook (no CDN). We'll inject when first image URL arrives
+    // FlipClock-Dateien: fertige Adressen vom Modul (versioniert über den Bild-Hook, ohne Hook als Data-URI).
+    // Die Kachel setzt weder Adressen noch Token selbst zusammen.
     let flipClockAssetsRequested = false;
-    function ensureFlipClockAssetsFromUrl(imageUrl, ts) {
+    function ensureFlipClockAssets(assets) {
       try {
-        if (flipClockAssetsRequested) return;
-        const raw = (typeof imageUrl === 'string') ? imageUrl : '';
-        if (!raw) return;
-        let base = raw.split('?')[0] || '';
-        let token = webhookToken || '';
-        try {
-          const u = new URL(raw, window.location.origin);
-          base = u.pathname || base || raw;
-          if (!token) token = u.searchParams.get('token') || '';
-        } catch (_) {}
-        if (!base) return;
-        const v = (typeof ts === 'number' && isFinite(ts)) ? ts : Date.now();
-        const tpart = token ? ('token=' + encodeURIComponent(token) + '&') : '';
-        const cssUrl = base + '?' + tpart + 'asset=flipclock.min.css&v=' + v;
-        const jsUrl  = base + '?' + tpart + 'asset=flipclock.min.js&v=' + v;
-        // CSS
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = cssUrl;
-        link.onload = () => {};
-        document.head.appendChild(link);
-        // JS
-        const s = document.createElement('script');
-        s.src = jsUrl;
-        s.async = true;
-        s.onload = () => {};
-        document.head.appendChild(s);
-        flipClockAssetsRequested = true;
-      } catch (e) { console.error(e); }
-    }
-
-    function ensureFlipClockAssetsFromBase(base, ts) {
-      try {
-        if (flipClockAssetsRequested) return;
-        if (!base || typeof base !== 'string') return;
-        const clean = base.split('?')[0];
-        if (!clean) return;
-        const v = (typeof ts === 'number' && isFinite(ts)) ? ts : Date.now();
-        const token = webhookToken || '';
-        const tpart = token ? ('token=' + encodeURIComponent(token) + '&') : '';
-        const cssUrl = clean + '?' + tpart + 'asset=flipclock.min.css&v=' + v;
-        const jsUrl  = clean + '?' + tpart + 'asset=flipclock.min.js&v=' + v;
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = cssUrl;
-        link.onload = () => {};
-        document.head.appendChild(link);
-        const s = document.createElement('script');
-        s.src = jsUrl;
-        s.async = true;
-        s.onload = () => {};
-        document.head.appendChild(s);
+        if (flipClockAssetsRequested || !assets || typeof assets !== 'object') return;
+        const css = (typeof assets.css === 'string') ? assets.css.trim() : '';
+        const js = (typeof assets.js === 'string') ? assets.js.trim() : '';
+        if (!css && !js) return;
+        if (css) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = css;
+          document.head.appendChild(link);
+        }
+        if (js) {
+          const s = document.createElement('script');
+          s.src = js;
+          s.async = true;
+          document.head.appendChild(s);
+        }
         flipClockAssetsRequested = true;
       } catch (e) { console.error(e); }
     }
@@ -460,27 +410,30 @@
       next();
     }
 
-    function setImage(url, slug, tod, ts) {
+    function setImage(url, slug, tod) {
       const wrap = document.getElementById('wrap');
       if (!wrap) return;
-      // Cache-Busting helper
-      const withTs = (u, t) => {
-        const sep = u.includes('?') ? '&' : '?';
-        return u + sep + 'v=' + (t || Date.now());
-      };
       const bgA = document.getElementById('bgA');
       const bgB = document.getElementById('bgB');
       if (!url || typeof url !== 'string' || url.trim() === '') {
         showError('Kein Bild verfügbar');
         return;
       }
-      const finalUrl = withTs(url.trim(), ts);
+      // Die Adresse ist versioniert (neuer Inhalt, neue Adresse): kein eigener Cache-Buster, der Browser darf cachen
+      const finalUrl = url.trim();
+      const info = ((slug || '') + ' ' + (tod || '')).trim();
+      if (finalUrl === currentImageUrl) {
+        wrap.setAttribute('data-image-info', info);
+        document.body.classList.remove('show-error');
+        return;
+      }
       const active = (bgA && bgA.classList.contains('is-active')) ? bgA : bgB;
       const next = active === bgA ? bgB : bgA;
       if (!active || !next) {
         // Fallback: set on wrap directly
         wrap.style.backgroundImage = `url('${finalUrl}')`;
-        wrap.setAttribute('data-image-info', ((slug || '') + ' ' + (tod || '')).trim());
+        currentImageUrl = finalUrl;
+        wrap.setAttribute('data-image-info', info);
         updateDate();
         document.body.classList.remove('show-error');
         return;
@@ -492,7 +445,8 @@
           next.style.backgroundImage = `url('${finalUrl}')`;
           next.classList.add('is-active');
           active.classList.remove('is-active');
-          wrap.setAttribute('data-image-info', ((slug || '') + ' ' + (tod || '')).trim());
+          currentImageUrl = finalUrl;
+          wrap.setAttribute('data-image-info', info);
           updateDate();
           document.body.classList.remove('show-error');
         };
@@ -504,6 +458,7 @@
     }
 
     function clearImage() {
+      currentImageUrl = '';
       const bgA = document.getElementById('bgA');
       const bgB = document.getElementById('bgB');
       if (bgA && bgB) {
@@ -853,12 +808,10 @@
           }
         }
 
-        // Capture token early for subsequent asset loads
-        try {
-          if (data && typeof data.token === 'string' && data.token.trim()) {
-            webhookToken = data.token.trim();
-          }
-        } catch (_) {}
+        // FlipClock-Dateien: fertige Adressen vom Modul, einmal geladen
+        if (data.flipclock) {
+          ensureFlipClockAssets(data.flipclock);
+        }
 
         // Toggle visibility if flags are present
         if (typeof data.showWeather === 'boolean' || typeof data.showClock === 'boolean' || typeof data.showDate === 'boolean' || typeof data.showForecast === 'boolean' || typeof data.showSeconds === 'boolean') {
@@ -941,29 +894,14 @@
         switch (data.type) {
           case 'image':
             {
-              try {
-                const code = (typeof data.wmoCode !== 'undefined') ? data.wmoCode : null;
-                const imgName = (typeof data.imageName === 'string') ? data.imageName : '';
-              } catch (e) {}
               const sw = (typeof data.showWeather === 'boolean') ? data.showWeather : true;
               const url = (typeof data.url === 'string') ? data.url.trim() : '';
               if (url) {
-                setImage(url, data.slug || '', data.timeOfDay || '', data.ts || 0);
-                // Ensure FlipClock assets are loaded via the same WebHook base (cache-busted)
-                ensureFlipClockAssetsFromUrl(url, data.ts || Date.now());
-                if (typeof data.assetBase === 'string' && data.assetBase.trim()) {
-                  ensureFlipClockAssetsFromBase(data.assetBase.trim(), data.ts || Date.now());
-                }
+                setImage(url, data.slug || '', data.timeOfDay || '');
               } else if (!sw) {
                 clearImage();
-                if (typeof data.assetBase === 'string' && data.assetBase.trim()) {
-                  ensureFlipClockAssetsFromBase(data.assetBase.trim(), data.ts || Date.now());
-                }
               } else {
                 showError('Kein Bild verfügbar');
-                if (typeof data.assetBase === 'string' && data.assetBase.trim()) {
-                  ensureFlipClockAssetsFromBase(data.assetBase.trim(), data.ts || Date.now());
-                }
               }
             }
             if (Array.isArray(data.forecast)) {

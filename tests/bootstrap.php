@@ -287,5 +287,63 @@ function query(string $url): array
     return $query;
 }
 
+// Letzte Nachricht eines Typs (image, temperature, forecast) aus den UpdateVisualizationValue-Aufrufen
+function last_message(array $updates, string $type): ?array
+{
+    foreach (array_reverse($updates) as $update) {
+        $message = json_decode($update, true, 512, JSON_THROW_ON_ERROR);
+        if (($message['type'] ?? null) === $type) {
+            return $message;
+        }
+    }
+    return null;
+}
+
 // WC_MODULE waehlt eine andere Fassung der Kachel (Gegenprobe gegen einen frueheren Stand).
 require getenv('WC_MODULE') ?: __DIR__ . '/../TileVisu-Weather-Clock-Tile/module.php';
+
+// Wie Symcons HookInstance: macht ProcessHookData oeffentlich (die Signatur muss dazu passen) und faengt Kopfzeilen
+// und Status ab, damit der Hook ohne Webserver laeuft. Nur fuer Fassungen mit SendHeader/SendStatus.
+if (is_subclass_of('TileVisuWeatherClockTile', 'IPSModuleStrict') && method_exists('TileVisuWeatherClockTile', 'SendHeader')) {
+    class HookProbeTile extends TileVisuWeatherClockTile
+    {
+        public array $sent = [];
+        public int $status = 200;
+
+        public function ProcessHookData(): void
+        {
+            parent::ProcessHookData();
+        }
+
+        public function hook(array $get, array $server = []): string
+        {
+            $_GET = $get;
+            $_SERVER['HTTP_IF_NONE_MATCH'] = $server['HTTP_IF_NONE_MATCH'] ?? '';
+            $this->sent = [];
+            $this->status = 200;
+            ob_start();
+            $this->ProcessHookData();
+            return (string) ob_get_clean();
+        }
+
+        public function header(string $name): ?string
+        {
+            foreach ($this->sent as $header) {
+                if (stripos($header, $name . ': ') === 0) {
+                    return substr($header, strlen($name) + 2);
+                }
+            }
+            return null;
+        }
+
+        protected function SendHeader(string $header): void
+        {
+            $this->sent[] = $header;
+        }
+
+        protected function SendStatus(int $code): void
+        {
+            $this->status = $code;
+        }
+    }
+}
