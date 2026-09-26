@@ -12,18 +12,97 @@
       "width": "500px"
     },
     {
-      "type": "SelectVariable",
-      "name": "ForecastVariableID",
-      "caption": "Wunderground forecast variable (JSON raw data forecast)",
-      "filterVariableTypes": [
-        3
-      ],
-      "showValueButton": true,
-      "width": "500px"
+      "type": "SelectLocation",
+      "name": "Location",
+      "caption": "Location"
     },
     {
       "type": "Label",
-      "caption": "Note: this module requires the Wunderground/Weather.com Sync module for weather data. Available in the Module Store."
+      "caption": "Note: this module uses the Open-Meteo API. Select your location; the service URL is built automatically."
+    },
+    {
+      "type": "CheckBox",
+      "name": "ShowWeather",
+      "caption": "Show weather"
+    },
+    {
+      "type": "CheckBox",
+      "name": "ShowForecast",
+      "caption": "Show forecast"
+    },
+    {
+      "type": "CheckBox",
+      "name": "UseAnimatedIcons",
+      "caption": "Use animated icons"
+    },
+    {
+      "type": "CheckBox",
+      "name": "UseOutlineIcons",
+      "caption": "outline/full"
+    },
+    {
+      "type": "CheckBox",
+      "name": "ShowClock",
+      "caption": "Show clock"
+    },
+    {
+      "type": "CheckBox",
+      "name": "ShowDate",
+      "caption": "Show date"
+    },
+    {
+      "type": "CheckBox",
+      "name": "ShowSeconds",
+      "caption": "Show seconds"
+    },
+    {
+      "type": "CheckBox",
+      "name": "StoreWeatherData",
+      "caption": "Write weather data to variable"
+    },
+    {
+      "type": "CheckBox",
+      "name": "StoreImageUrl",
+      "caption": "Write image URL to variable"
+    },
+    {
+      "type": "SelectMedia",
+      "name": "CustomMediaID",
+      "caption": "Custom media image"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "DateFontSizePx",
+      "caption": "Date font size (px, 0 = auto)",
+      "suffix": "px"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "DateScaleFactor",
+      "caption": "Date size factor (1-5)",
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "ForecastWidthPercent",
+      "caption": "Forecast width (%)",
+      "suffix": "%"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "ClockWidthPercent",
+      "caption": "Clock width (%)",
+      "suffix": "%"
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "ClockVerticalPercent",
+      "caption": "Clock vertical position (%)",
+      "suffix": "%",
+      "minimum": 20,
+      "maximum": 70
+
     },
     {
       "type": "Label",
