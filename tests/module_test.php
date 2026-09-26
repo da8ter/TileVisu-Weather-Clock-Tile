@@ -127,12 +127,14 @@ $h->ApplyChanges();
 $token = $h->attributes['WebhookToken'];
 check(strlen($token) === 32 && ctype_xdigit($token), 'Hook token is created in ApplyChanges');
 $image = last_message($h->updates, 'image');
+$initial = tile($h)['message'];
 $v16 = '[0-9a-f]{16}';
 check(preg_match('~\A/hook/wetterbilder/24001\?name=light-rain-day&v=' . $v16 . '&token=' . $token . '\z~', $image['url']) === 1,
     'Background is a versioned hook address on the old path');
-check(preg_match('~\A/hook/wetterbilder/24001\?asset=flipclock\.min\.css&v=' . $v16 . '&token=' . $token . '\z~', $image['flipclock']['css']) === 1
-    && preg_match('~\A/hook/wetterbilder/24001\?asset=flipclock\.min\.js&v=' . $v16 . '&token=' . $token . '\z~', $image['flipclock']['js']) === 1,
-    'FlipClock files come as finished versioned addresses from the module');
+check(preg_match('~\A/hook/wetterbilder/24001\?asset=flipclock\.min\.css&v=' . $v16 . '&token=' . $token . '\z~', $initial['flipclock']['css']) === 1
+    && preg_match('~\A/hook/wetterbilder/24001\?asset=flipclock\.min\.js&v=' . $v16 . '&token=' . $token . '\z~', $initial['flipclock']['js']) === 1,
+    'FlipClock files come as finished versioned addresses from the module (initial state)');
+check(!str_contains(implode('', $h->updates), 'flipclock'), 'Messages to open tiles do not repeat the FlipClock addresses');
 check(preg_match('~\A/hook/wetterbilder/24001\?icon=full%2Fstatic%2Frain\.svg&v=' . $v16 . '&token=' . $token . '\z~', $image['temperature']['iconUrl']) === 1,
     'Weather icon is a versioned hook address');
 check(count($image['forecast']) === 4 && array_filter($image['forecast'], static fn (array $d): bool => !str_starts_with($d['iconUrl'], '/hook/wetterbilder/24001?icon=')) === [],
@@ -142,7 +144,7 @@ check(array_filter($h->updates, static fn (string $u): bool => array_intersect([
     'Messages carry no ts (cache buster), no separate token and no assetBase');
 check(array_keys($image) === ['type', 'url', 'slug', 'timeOfDay', 'temperature', 'forecast', 'showWeather', 'showClock', 'showDate',
     'showSeconds', 'forecastWidthPercent', 'clockWidthPercent', 'clockVerticalPercent', 'dateFontSizePx', 'dateScaleFactor',
-    'showForecast', 'flipclock', 'wmoCode', 'imageName'], 'Image message keys');
+    'showForecast', 'wmoCode', 'imageName'], 'Image message keys');
 check(!preg_match('~[\s"\'()\\\\]~', $image['url']), 'Background address is valid inside CSS url()');
 
 echo '--- Auslieferung ueber den Hook' . PHP_EOL;
@@ -158,9 +160,9 @@ check($h->status === 304 && $body === '' && $h->header('Content-Type') === null,
 $body = $h->hook(['name' => 'light-rain-day', 'v' => 'alt', 'token' => $token], ['HTTP_IF_NONE_MATCH' => '"' . $q['v'] . '"']);
 check($h->status === 200 && $body === $bytes('assets/wetterbilder/light-rain-day.png') && $h->header('Cache-Control') === 'no-cache',
     'Outdated version gets the current file uncached and never 304');
-$body = $h->hook(query($image['flipclock']['css']));
+$body = $h->hook(query($initial['flipclock']['css']));
 check($body === $bytes('assets/flipclock/flipclock.min.css') && $h->header('Content-Type') === 'text/css; charset=utf-8', 'FlipClock CSS is delivered');
-$body = $h->hook(query($image['flipclock']['js']));
+$body = $h->hook(query($initial['flipclock']['js']));
 check($body === $bytes('assets/flipclock/flipclock.min.js') && $h->header('Content-Type') === 'application/javascript; charset=utf-8'
     && $h->header('Cache-Control') === 'public, max-age=31536000, immutable', 'FlipClock JS is delivered and cached long');
 $body = $h->hook(query($image['temperature']['iconUrl']));
@@ -227,7 +229,7 @@ $big->ApplyChanges();
 $image = last_message($big->updates, 'image');
 check($image['imageName'] === 'sleet-night' && $image['url'] === $dataUri('image/png', 'assets/wetterbilder/sleet-night.png'),
     'Background above the limit (916 kB) stays a data URI');
-check(str_starts_with($image['temperature']['iconUrl'], '/hook/') && str_starts_with($image['flipclock']['js'], '/hook/'), 'Small files still use the hook');
+check(str_starts_with($image['temperature']['iconUrl'], '/hook/') && str_starts_with(tile($big)['message']['flipclock']['js'], '/hook/'), 'Small files still use the hook');
 $body = $big->hook(['name' => 'sleet-night', 'token' => $big->attributes['WebhookToken']]);
 check($big->status === 404 && $big->sent === [] && $body === '', 'Hook refuses the file above the limit before any output');
 check($big->hook(['name' => 'fog-day', 'token' => $big->attributes['WebhookToken']]) === $bytes('assets/wetterbilder/fog-day.png'), 'Files below the limit are delivered');
@@ -241,7 +243,7 @@ $f->ApplyChanges();
 $image = last_message($f->updates, 'image');
 check($f->attributes['WebhookToken'] === '', 'Without registered hook no token is created');
 check($image['url'] === $dataUri('image/png', 'assets/wetterbilder/light-rain-day.png'), 'Background is embedded as data URI');
-check($image['flipclock'] === ['css' => $dataUri('text/css', 'assets/flipclock/flipclock.min.css'), 'js' => $dataUri('application/javascript', 'assets/flipclock/flipclock.min.js')],
+check(tile($f)['message']['flipclock'] === ['css' => $dataUri('text/css', 'assets/flipclock/flipclock.min.css'), 'js' => $dataUri('application/javascript', 'assets/flipclock/flipclock.min.js')],
     'FlipClock files are embedded as data URIs');
 check($image['temperature']['iconUrl'] === $dataUri('image/svg+xml', 'assets/icons/full/static/rain.svg'), 'Icons are embedded as data URIs');
 $f->hook(['name' => 'fog-day', 'token' => '']);
@@ -262,5 +264,112 @@ $h->buffers['AssetVersions'] = json_encode($versions);
 $h->ApplyChanges();
 check(query(last_message($h->updates, 'image')['url'])['v'] === substr(hash_file('sha256', $moduleDir . '/' . $key), 0, 16), 'Changed file stamp hashes the file again');
 check(strlen($h->buffers['AssetVersions']) < 262144, 'Version buffer stays far below 256 kB');
+
+echo '--- Anfangszustand im Kacheldokument' . PHP_EOL;
+reset_world();
+$weatherBody = weather_json(63, 1);
+$boese = "O'Neil \"x\" \\ Zeile1\nZeile2 </script><script>alert(1)</script> & <b> <!--";
+variable(700, 21.5, $boese);
+$d = tile_module(25001, ['TemperatureVariableID' => 700]);
+$d->ApplyChanges();
+check(count($fetches) === 1 && json_decode($d->attributes['WeatherCache'], true)['data'] === json_decode($weatherBody, true),
+    'ApplyChanges without cached data fetches once and keeps the answer in the attribute WeatherCache');
+$fetches = [];
+$d->updates = [];
+$t = tile($d);
+check($fetches === [] && $d->updates === [], 'Opening the tile fetches nothing and sends nothing to other tiles');
+check($t['message']['type'] === 'image' && $t['message']['imageName'] === 'light-rain-day' && count($t['message']['forecast']) === 4
+    && str_starts_with($t['message']['temperature']['iconUrl'], '/hook/wetterbilder/25001?icon='), 'Document carries the complete state from the cache');
+check(str_starts_with($t['message']['flipclock']['js'], '/hook/wetterbilder/25001?asset=flipclock.min.js&v=')
+    && str_starts_with($t['message']['flipclock']['css'], '/hook/wetterbilder/25001?asset=flipclock.min.css&v='), 'Initial state carries the FlipClock addresses');
+check($t['message']['temperature']['value'] === $boese, 'Value with quotes, backslash, newline and </script> arrives unchanged');
+check(substr_count($t['script'], '</script>') === 1 && !str_contains($t['script'], '<b>') && !str_contains($t['script'], '<!--'),
+    'No tag, comment or </script> from a value in the initial script block');
+check(!str_contains($t['html'], 'base64,'), 'Tile document carries no Base64 with the hook');
+$hookAvailable = false;
+$e = tile_module(25002);
+$e->ApplyChanges();
+$et = tile($e);
+check(str_starts_with($et['message']['url'], 'data:image/png;base64,') && str_starts_with($et['message']['flipclock']['js'], 'data:application/javascript;base64,'),
+    'Without hook the document embeds background and FlipClock as data URIs');
+$hookAvailable = true;
+echo 'Kacheldokument mit/ohne Hook: ' . strlen($t['html']) . ' / ' . strlen($et['html']) . ' Bytes' . PHP_EOL;
+
+echo '--- Oeffnen und Temperatur-Updates ohne Netzabruf' . PHP_EOL;
+$fetches = [];
+$d->updates = [];
+$d->RequestAction('GetState', 0);
+check($fetches === [] && $d->updates === [], 'GetState with fresh data fetches nothing and sends nothing');
+$variables[700]['formatted'] = '22,0 °C';
+$d->MessageSink(0, 700, VM_UPDATE, [22.0, true, 21.5, time()]);
+$temp = last_message($d->updates, 'temperature');
+check($fetches === [] && $temp['temperature']['value'] === '22,0 °C' && str_starts_with($temp['temperature']['iconUrl'], '/hook/'),
+    'Temperature update fetches nothing and takes the weather icon from the cache');
+$age = static function (TileVisuWeatherClockTile $m, int $seconds): void {
+    $cache = json_decode($m->attributes['WeatherCache'], true);
+    $cache['at'] = time() - $seconds;
+    $m->attributes['WeatherCache'] = json_encode($cache);
+};
+$age($d, 5000);
+$d->updates = [];
+tile($d);
+check($fetches === [] && $d->updates === [], 'Opening the tile with outdated data still fetches nothing (renders the cached state)');
+$weatherBody = weather_json(3, 1);
+$d->RequestAction('GetState', 0);
+check(count($fetches) === 1 && last_message($d->updates, 'image')['imageName'] === 'thick-cloud-day',
+    'GetState with data older than 70 minutes fetches once and sends the new state');
+$d->RequestAction('GetState', 0);
+check(count($fetches) === 1, 'Right afterwards GetState fetches nothing');
+$age($d, 5000);
+$before = $d->attributes['WeatherCache'];
+$weatherBody = '';
+$fetches = [];
+$d->updates = [];
+$d->RequestAction('GetState', 0);
+check(count($fetches) === 1 && $d->updates === [] && $d->attributes['WeatherCache'] === $before, 'Failed fetch keeps the cached answer and sends nothing');
+$d->RequestAction('GetState', 0);
+$d->ApplyChanges();
+check(count($fetches) === 1, 'After a failed fetch neither GetState nor ApplyChanges try again within 5 minutes');
+check(last_message($d->updates, 'image')['imageName'] === 'thick-cloud-day', 'Meanwhile the tiles keep the last known weather');
+$d->buffers['WeatherFetchFailed'] = (string) (time() - 301);
+$d->RequestAction('GetState', 0);
+check(count($fetches) === 2, 'After 5 minutes the next GetState tries again');
+$weatherBody = '{"error":true,"reason":"Latitude must be in range of -90 to 90°."}';
+$d->buffers['WeatherFetchFailed'] = '';
+$d->RequestAction('GetState', 0);
+check(count($fetches) === 3 && $d->attributes['WeatherCache'] === $before, 'Open-Meteo error answer counts as failure and keeps the cache');
+$weatherBody = weather_json(0, 1);
+$d->buffers['WeatherFetchFailed'] = '';
+$fetches = [];
+$d->UpdateNow();
+check(count($fetches) === 1 && last_message($d->updates, 'image')['imageName'] === 'sunny-day', 'Timer (UpdateNow) always fetches');
+$d->UpdateNow();
+check(count($fetches) === 2, 'UpdateNow fetches even with fresh data (manual refresh)');
+$d->properties['Location'] = json_encode(['latitude' => 48.1, 'longitude' => 11.6]);
+$d->ApplyChanges();
+check(count($fetches) === 3 && str_contains($fetches[2], 'latitude=48.1&longitude=11.6'), 'New location: ApplyChanges fetches although the old data is fresh');
+$d->ApplyChanges();
+check(count($fetches) === 3, 'ApplyChanges with fresh data fetches nothing');
+$d->properties['ShowWeather'] = false;
+$age($d, 99999);
+$d->ApplyChanges();
+$d->RequestAction('GetState', 0);
+$d->UpdateNow();
+tile($d);
+check(count($fetches) === 3, 'Without weather display nothing is fetched');
+$d->properties['ShowWeather'] = true;
+$age($d, 30000);
+$old6h = tile($d)['message'];
+check($old6h['wmoCode'] === 0 && $old6h['forecast'] === [] && $old6h['temperature']['iconUrl'] === ''
+    && in_array($old6h['imageName'], ['sunny-day', 'clear-sky-night'], true), 'Data older than 6 hours is not shown (as after a failed fetch)');
+$weatherBody = weather_json(63, 1, 12.3, 'yesterday');
+$d->UpdateNow();
+$forecast = last_message($d->updates, 'image')['forecast'];
+check(count($forecast) === 4 && $forecast[0]['label'] === german_day('today') && $forecast[0]['max'] === 16 && $forecast[0]['min'] === 8,
+    'Forecast skips days before today (cached answer from yesterday)');
+$d->properties['StoreWeatherData'] = true;
+$d->ApplyChanges();
+$d->UpdateNow();
+check(GetValue($d->idents['OpenMeteoRaw']) === $weatherBody, 'OpenMeteoRaw still receives the raw answer of each fetch');
 
 echo 'OK' . PHP_EOL;

@@ -156,7 +156,7 @@ class IPSModuleStrict extends ModuleDouble
 
 $runlevel = KR_READY;
 $hookAvailable = true;
-$options = $variables = $media = $objects = $writes = $fetches = $webhookCalls = [];
+$options = $variables = $media = $objects = $writes = $fetches = $fallbackFetches = $webhookCalls = [];
 $weatherBody = '';
 $webhookInstances = [];
 
@@ -166,7 +166,7 @@ function reset_world(): void
     $GLOBALS['runlevel'] = KR_READY;
     $GLOBALS['hookAvailable'] = true;
     $GLOBALS['options'] = $GLOBALS['variables'] = $GLOBALS['media'] = $GLOBALS['objects'] = [];
-    $GLOBALS['writes'] = $GLOBALS['fetches'] = $GLOBALS['webhookCalls'] = $GLOBALS['webhookInstances'] = [];
+    $GLOBALS['writes'] = $GLOBALS['fetches'] = $GLOBALS['fallbackFetches'] = $GLOBALS['webhookCalls'] = $GLOBALS['webhookInstances'] = [];
     $GLOBALS['weatherBody'] = '';
 }
 
@@ -241,7 +241,8 @@ function IPS_ApplyChanges(int $InstanceID): bool
     return true;
 }
 
-// Open-Meteo als Attrappe: zaehlt jeden Abruf und liefert $weatherBody ('' = Abruf gescheitert)
+// Open-Meteo als Attrappe: jeder Abruf beginnt mit Sys_GetURLContentEx ($fetches zaehlt die Abrufe) und liefert
+// $weatherBody ('' = gescheitert, dann folgen Sys_GetURLContent und die ohne Netz wirkungslosen Rueckfaelle)
 function Sys_GetURLContentEx(string $URL, array $Options): string|false
 {
     $GLOBALS['fetches'][] = $URL;
@@ -249,7 +250,7 @@ function Sys_GetURLContentEx(string $URL, array $Options): string|false
 }
 function Sys_GetURLContent(string $URL): string|false
 {
-    $GLOBALS['fetches'][] = $URL;
+    $GLOBALS['fallbackFetches'][] = $URL;
     return $GLOBALS['weatherBody'];
 }
 
@@ -299,8 +300,35 @@ function last_message(array $updates, string $type): ?array
     return null;
 }
 
+// Deutscher Wochentag eines Datums, wie die Kachel ihn zeigt
+function german_day(string $date): string
+{
+    return ['Monday' => 'Montag', 'Tuesday' => 'Dienstag', 'Wednesday' => 'Mittwoch', 'Thursday' => 'Donnerstag',
+        'Friday' => 'Freitag', 'Saturday' => 'Samstag', 'Sunday' => 'Sonntag'][(new DateTimeImmutable($date))->format('l')];
+}
+
 // WC_MODULE waehlt eine andere Fassung der Kachel (Gegenprobe gegen einen frueheren Stand).
-require getenv('WC_MODULE') ?: __DIR__ . '/../TileVisu-Weather-Clock-Tile/module.php';
+define('MODULE_FILE', getenv('WC_MODULE') ?: __DIR__ . '/../TileVisu-Weather-Clock-Tile/module.php');
+require MODULE_FILE;
+
+// Kacheldokument zerlegen: module.html mit genau einem Skript vor </body>, das den Anfangszustand als
+// handleMessage("<JSON-Text als JS-Stringliteral>") uebergibt. Eine andere Form wirft.
+function tile(TileVisuWeatherClockTile $module): array
+{
+    $html = $module->GetVisualizationTile();
+    $base = (string) file_get_contents(dirname(MODULE_FILE) . '/module.html');
+    $end = (int) strripos($base, '</body>');
+    $script = substr($html, $end, strlen($html) - strlen($base) - 1);
+    if ($html !== substr($base, 0, $end) . $script . "\n" . substr($base, $end)) {
+        throw new RuntimeException('Tile is not module.html with one inserted script before </body>');
+    }
+    // Possessiv: auch eine Data-URI von 1 MB passt ohne Rueckverfolgung
+    if (preg_match('~\A<script>handleMessage\(("(?:[^"\\\\]++|\\\\.)*+")\);</script>\z~s', $script, $literal) !== 1) {
+        throw new RuntimeException('Unexpected initial script: ' . substr($script, 0, 200));
+    }
+    $json = json_decode($literal[1], true, 512, JSON_THROW_ON_ERROR);
+    return ['html' => $html, 'script' => $script, 'message' => json_decode($json, true, 512, JSON_THROW_ON_ERROR)];
+}
 
 // Wie Symcons HookInstance: macht ProcessHookData oeffentlich (die Signatur muss dazu passen) und faengt Kopfzeilen
 // und Status ab, damit der Hook ohne Webserver laeuft. Nur fuer Fassungen mit SendHeader/SendStatus.

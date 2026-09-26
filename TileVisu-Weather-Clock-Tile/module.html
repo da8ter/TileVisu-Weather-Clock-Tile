@@ -1162,7 +1162,8 @@
 
     function requestInitial() {
       try {
-        // Fordert den aktuellen Zustand vom Modul an
+        // Den Stand bringt das Kacheldokument mit. Das Modul ruft nur bei veralteten Wetterdaten neu ab und
+        // schickt dann allen Kacheln den neuen Stand.
         requestAction('GetState', 0);
       } catch (e) {
         console.error(e);

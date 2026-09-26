@@ -16,6 +16,16 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
     // Erlaubte Angaben: Wetterbild ohne Endung, Symbol als Pfad unter assets/icons - andere Zeichen und .. nie
     private const BACKGROUND_NAME_PATTERN = '~\A[a-z0-9-]+\z~';
     private const ICON_PATH_PATTERN = '~\A(?:(?:full|outline)/)?(?:animated|static)/[a-z0-9-]+\.(webp|gif|png|svg)\z~';
+    // Zwischengespeicherte Open-Meteo-Antwort: bis 70 Minuten frisch (Stundentimer mit Reserve), danach darf das
+    // Oeffnen der Kachel oder ApplyChanges neu abrufen; aelter als 6 Stunden wird sie nicht mehr angezeigt
+    private const WEATHER_FRESH_SECONDS = 4200;
+    private const WEATHER_USABLE_SECONDS = 21600;
+    // Nach einem gescheiterten Abruf fragen Kachel und ApplyChanges fruehestens nach 5 Minuten wieder an
+    private const WEATHER_RETRY_SECONDS = 300;
+
+    // Je Aufruf einmal dekodierter Zwischenspeicher (Schluessel: Rohtext des Attributs)
+    private string $weatherCacheRaw = '';
+    private ?array $weatherCache = null;
 
     public function Create(): void
     {
@@ -54,6 +64,8 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         $this->RegisterAttributeString('LastSlug', '');
         $this->RegisterAttributeString('LastTimeOfDay', '');
         $this->RegisterAttributeString('WebhookToken', '');
+        // Letzte Open-Meteo-Antwort {url, at, data}: Oeffnen, Temperatur-Updates und ApplyChanges kommen ohne Netz aus
+        $this->RegisterAttributeString('WeatherCache', '');
 
         // Aktiviert die HTML-SDK Darstellung (HTML-Kachel)
         $this->SetVisualizationType(1);
@@ -144,7 +156,6 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
 
         $temperatureVarId = (int)$this->ReadPropertyInteger('TemperatureVariableID');
         $previousVarId = (int)$this->ReadAttributeInteger('LastTemperatureVarID');
-        $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
         $customMediaId = (int)$this->ReadPropertyInteger('CustomMediaID');
         $previousMediaId = (int)$this->ReadAttributeInteger('LastCustomMediaID');
 
@@ -177,12 +188,9 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         // Set periodic timer interval: every 60 minutes (3600000 ms)
         $this->SetTimerInterval('UpdateTimer', 3600000);
 
-        // Trigger immediate update
-        $this->sendImageUpdate();
-        if ($showWeather) {
-            $this->sendTemperatureUpdate();
-            $this->sendForecastUpdate();
-        }
+        // Neue Konfiguration an alle Kacheln; abgerufen wird nur bei veralteten Daten oder neuem Standort
+        $this->refreshWeatherIfStale();
+        $this->sendState();
     }
 
     public function GetVisualizationTile(): string
@@ -190,22 +198,33 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         // Liefert den HTML-Inhalt der Kachel (HTML-SDK)
         $path = __DIR__ . DIRECTORY_SEPARATOR . 'module.html';
         $html = is_file($path) ? file_get_contents($path) : false;
-        if (is_string($html)) {
+        if (!is_string($html)) {
+            return '<div style="padding:1rem;color:#fff;background:#000;">module.html not found</div>';
+        }
+        // Anfangszustand im Dokument statt per UpdateVisualizationValue an alle Kacheln; aus dem Zwischenspeicher,
+        // das Oeffnen ruft nichts bei Open-Meteo ab. Die FlipClock-Dateien braucht nur der Erstaufbau.
+        $message = $this->imageMessage();
+        $message['flipclock'] = $this->flipClockSources();
+        $json = json_encode($message, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($json === false) {
+            $this->SendDebug('Tile', 'JSON encoding failed: ' . json_last_error_msg(), 0);
             return $html;
         }
-        return '<div style="padding:1rem;color:#fff;background:#000;">module.html not found</div>';
+        // Der JSON-Text als JS-Stringliteral; JSON_HEX_TAG: kein </script> und kein <!-- im Skriptblock
+        $script = '<script>handleMessage(' . json_encode($json, JSON_HEX_TAG | JSON_HEX_AMP) . ');</script>';
+        $end = strripos($html, '</body>');
+        return $end === false ? $html . $script : substr($html, 0, $end) . $script . "\n" . substr($html, $end);
     }
 
     /**
-     * Manuell/Timer: Zustände aktualisieren (Open-Meteo basiert)
+     * Manuell/Timer: Wetter frisch abrufen und den Stand an alle Kacheln senden
      */
     public function UpdateNow(): void
     {
-        $this->sendImageUpdate();
         if ((bool)$this->ReadPropertyBoolean('ShowWeather')) {
-            $this->sendTemperatureUpdate();
-            $this->sendForecastUpdate();
+            $this->fetchWeather();
         }
+        $this->sendState();
     }
 
     public function RequestAction(string $Ident, mixed $Value): void
@@ -215,8 +234,11 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
                 $this->UpdateNow();
                 return;
             case 'GetState':
-                // Ermittele aktuellen Zustand (Slug/ToD) und referenziere Nutzer-Medienobjekt
-                $this->UpdateNow();
+                // Die Kachel bringt ihren Stand im Dokument mit (GetVisualizationTile). Abgerufen und an alle
+                // Kacheln gesendet wird nur, wenn die Wetterdaten veraltet sind.
+                if ($this->refreshWeatherIfStale()) {
+                    $this->sendState();
+                }
                 return;
         }
         throw new Exception('Invalid Ident');
@@ -490,16 +512,34 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             'clockVerticalPercent' => $cv,
             'dateFontSizePx'       => $df,
             'dateScaleFactor'      => $ds,
-            'showForecast'         => $showForecast,
-            'flipclock'            => $this->flipClockSources()
+            'showForecast'         => $showForecast
         ];
+    }
+
+    // Bild, Temperatur und Vorhersage an alle offenen Kacheln
+    private function sendState(): void
+    {
+        $this->sendImageUpdate();
+        if ((bool)$this->ReadPropertyBoolean('ShowWeather')) {
+            $this->sendTemperatureUpdate();
+            $this->sendForecastUpdate();
+        }
     }
 
     private function sendImageUpdate(): void
     {
+        $payload = $this->imageMessage();
+        $this->sendPayload($payload);
+        $this->updateCurrentImageUrl($payload['url']);
+    }
+
+    // Vollstaendiger Stand der Kachel (Bild, Temperatur, Vorhersage, Anzeige) aus den zwischengespeicherten
+    // Wetterdaten, ohne Abruf bei Open-Meteo
+    private function imageMessage(): array
+    {
         $showWeather = (bool)$this->ReadPropertyBoolean('ShowWeather');
         $showClock   = (bool)$this->ReadPropertyBoolean('ShowClock');
-        $hasCustom = $this->customImage() !== null;
+        $customUrl = $this->customImageSource();
         // Clamp width percentages to [5..100]
         $fw = max(5, min(100, (int)$this->ReadPropertyInteger('ForecastWidthPercent')));
         $cw = max(5, min(100, (int)$this->ReadPropertyInteger('ClockWidthPercent')));
@@ -512,10 +552,9 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
 
         // If weather display is disabled: optionally show custom media image; no weather details
         if (!$showWeather) {
-            $url = $this->customImageSource();
-            $payload = [
+            return [
                 'type'        => 'image',
-                'url'         => $url,
+                'url'         => $customUrl,
                 'slug'        => '',
                 'timeOfDay'   => '',
                 'wmoCode'     => null,
@@ -531,27 +570,20 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
                 'clockVerticalPercent' => $cv,
                 'dateFontSizePx'       => $df,
                 'dateScaleFactor'      => max(1, min(5, (int)$this->ReadPropertyInteger('DateScaleFactor'))),
-                'showForecast'         => false,
-                'flipclock'            => $this->flipClockSources()
+                'showForecast'         => false
             ];
-            $this->sendPayload($payload);
-            $this->updateCurrentImageUrl($url);
-            return;
         }
 
         // If a custom media is configured and has content, prefer it as background even when weather is enabled
-        if ($hasCustom) {
-            $url = $this->customImageSource();
-            $payload = $this->buildVisualizationPayload($url, '', '');
+        if ($customUrl !== '') {
+            $payload = $this->buildVisualizationPayload($customUrl, '', '');
             $payload['wmoCode'] = null;
             $payload['imageName'] = 'custom';
-            $this->sendPayload($payload);
-            $this->updateCurrentImageUrl($url);
-            return;
+            return $payload;
         }
 
-        // Dynamic weather image via Open-Meteo
-        $data = $this->fetchOpenMeteo();
+        // Dynamic weather image from the cached Open-Meteo data
+        $data = $this->weatherData();
         $wmoCode = 0;
         $isDay = null;
         if (is_array($data) && isset($data['current']) && is_array($data['current'])) {
@@ -563,8 +595,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             }
         }
         if ($isDay === null) {
-            $h = (int)date('G');
-            $isDay = ($h >= 6 && $h < 20);
+            $isDay = $this->isDayByClock();
         }
 
         $name = $this->mapWMOToBackgroundName($wmoCode, $isDay);
@@ -575,8 +606,13 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             $slug = substr($name, 0, - (strlen($m[1]) + 1));
         }
 
-        $this->WriteAttributeString('LastSlug', $slug);
-        $this->WriteAttributeString('LastTimeOfDay', $tod);
+        // Fuer Hook-Anfragen ohne Namen; nur bei Aenderung schreiben (auch der Erstaufbau jeder Kachel kommt hier vorbei)
+        if ($this->ReadAttributeString('LastSlug') !== $slug) {
+            $this->WriteAttributeString('LastSlug', $slug);
+        }
+        if ($this->ReadAttributeString('LastTimeOfDay') !== $tod) {
+            $this->WriteAttributeString('LastTimeOfDay', $tod);
+        }
 
         $baseName = $slug . '-' . $tod;
         // Ensure the chosen background actually exists; otherwise pick a safe fallback
@@ -592,8 +628,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         $payload = $this->buildVisualizationPayload($webhookUrl, $slug, $tod);
         $payload['wmoCode'] = $wmoCode;
         $payload['imageName'] = $baseName;
-        $this->sendPayload($payload);
-        $this->updateCurrentImageUrl($webhookUrl);
+        return $payload;
     }
 
     // Nachricht an alle offenen Kacheln; ein nicht kodierbarer Wert geht nicht als leerer Text hinaus
@@ -805,8 +840,8 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             }
         }
 
-        // Open-Meteo aktuelle Daten
-        $data = $this->fetchOpenMeteo();
+        // Open-Meteo aktuelle Daten (Zwischenspeicher)
+        $data = $this->weatherData();
         if (is_array($data) && isset($data['current']) && is_array($data['current'])) {
             if ($result['value'] === '' && isset($data['current']['temperature_2m'])) {
                 $t = (float)$data['current']['temperature_2m'];
@@ -829,7 +864,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
     private function getForecastPayload(): array
     {
         $out = [];
-        $data = $this->fetchOpenMeteo();
+        $data = $this->weatherData();
         if (!is_array($data) || !isset($data['daily']) || !is_array($data['daily'])) {
             $this->SendDebug('Forecast', 'No daily data in Open-Meteo response', 0);
             return $out;
@@ -849,12 +884,17 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             $isDayNow = $this->isDayByClock();
         }
 
-        $count = min(4, count($times), count($codes), count($tMax), count($tMin));
-        for ($i = 0; $i < $count; $i++) {
+        // Tage vor heute auslassen: ein zwischengespeicherter Stand von gestern begaenne sonst mit dem falschen Tag
+        $today = date('Y-m-d');
+        $count = min(count($times), count($codes), count($tMax), count($tMin));
+        for ($i = 0; $i < $count && count($out) < 4; $i++) {
             $date = (string)($times[$i] ?? '');
+            if ($date !== '' && $date < $today) {
+                continue;
+            }
             $label = $this->germanDayNameFromDate($date);
-            $max   = is_numeric($tMax[$i] ?? null) ? (int)round($tMax[$i]) : null;
-            $min   = is_numeric($tMin[$i] ?? null) ? (int)round($tMin[$i]) : null;
+            $max   = is_numeric($tMax[$i] ?? null) ? (int)round((float)$tMax[$i]) : null;
+            $min   = is_numeric($tMin[$i] ?? null) ? (int)round((float)$tMin[$i]) : null;
             $code  = (int)($codes[$i] ?? 0);
             // Use OpenMeteo WMO code directly for icon filename with current day/night variant
             $iconUrl = $this->iconSource($code, $isDayNow);
@@ -872,16 +912,85 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
 
     
 
-    private function fetchOpenMeteo(): ?array
+    // Open-Meteo-Adresse des konfigurierten Standorts
+    private function weatherUrl(): string
     {
-        static $cache = null;
-        static $cacheUrl = '';
         [$lat, $lon] = $this->resolveLocation();
-        $url = $this->buildOpenMeteoUrl($lat, $lon);
-        if ($cache !== null && $cacheUrl === $url) {
-            return $cache;
+        return $this->buildOpenMeteoUrl($lat, $lon);
+    }
+
+    // Letzte gueltige Antwort {url, at, data} aus dem Attribut WeatherCache, je Aufruf nur einmal dekodiert
+    private function weatherCache(): ?array
+    {
+        $raw = $this->ReadAttributeString('WeatherCache');
+        if ($raw !== $this->weatherCacheRaw) {
+            $cache = json_decode($raw, true);
+            $this->weatherCache = is_array($cache) && is_string($cache['url'] ?? null) && is_int($cache['at'] ?? null)
+                && is_array($cache['data'] ?? null) ? $cache : null;
+            $this->weatherCacheRaw = $raw;
         }
+        return $this->weatherCache;
+    }
+
+    // Zwischengespeicherte Wetterdaten fuer den Standort, solange sie hoechstens 6 Stunden alt sind; sonst null
+    // (dann wie bei einem gescheiterten Abruf: Hintergrund nach Uhrzeit, keine Vorhersage)
+    private function weatherData(): ?array
+    {
+        $cache = $this->weatherCache();
+        if ($cache === null || $cache['url'] !== $this->weatherUrl() || time() - $cache['at'] > self::WEATHER_USABLE_SECONDS) {
+            return null;
+        }
+        return $cache['data'];
+    }
+
+    private function isWeatherFresh(): bool
+    {
+        $cache = $this->weatherCache();
+        return $cache !== null && $cache['url'] === $this->weatherUrl() && time() - $cache['at'] <= self::WEATHER_FRESH_SECONDS;
+    }
+
+    // Ruft Open-Meteo nur ab, wenn das Wetter angezeigt wird und die Daten veraltet sind oder zu einem anderen
+    // Standort gehoeren; nach einem gescheiterten Abruf erst nach WEATHER_RETRY_SECONDS wieder.
+    private function refreshWeatherIfStale(): bool
+    {
+        if (!(bool)$this->ReadPropertyBoolean('ShowWeather') || $this->isWeatherFresh()) {
+            return false;
+        }
+        $failedAt = (int)$this->GetBuffer('WeatherFetchFailed');
+        if ($failedAt > 0 && time() - $failedAt < self::WEATHER_RETRY_SECONDS) {
+            return false;
+        }
+        return $this->fetchWeather();
+    }
+
+    // Abruf bei Open-Meteo: eine gueltige Antwort ersetzt den Zwischenspeicher, eine gescheiterte laesst ihn stehen
+    private function fetchWeather(): bool
+    {
+        $url = $this->weatherUrl();
         $this->SendDebug('OpenMeteo', 'Fetch URL: ' . $url, 0);
+        $content = $this->httpGet($url);
+        if ($content !== '') {
+            $varId = $this->ReadPropertyBoolean('StoreWeatherData') ? @$this->GetIDForIdent('OpenMeteoRaw') : 0;
+            if ($varId > 0) {
+                @SetValueString($varId, $content);
+            }
+            $this->SendDebug('OpenMeteo', 'Response length: ' . strlen($content), 0);
+        }
+        $data = $content === '' ? null : json_decode($content, true);
+        $cache = is_array($data) && empty($data['error']) ? json_encode(['url' => $url, 'at' => time(), 'data' => $data]) : false;
+        if ($cache === false) {
+            $this->SetBuffer('WeatherFetchFailed', (string)time());
+            $this->SendDebug('OpenMeteo', $content === '' ? 'Empty response or HTTP error' : 'Invalid response: ' . substr($content, 0, 200), 0);
+            return false;
+        }
+        $this->SetBuffer('WeatherFetchFailed', '');
+        $this->WriteAttributeString('WeatherCache', $cache);
+        return true;
+    }
+
+    // Antworttext einer Open-Meteo-Adresse, '' bei Fehler (Symcon, dann cURL, dann Streams)
+    private function httpGet(string $url): string
+    {
         $content = '';
         if (function_exists('Sys_GetURLContentEx')) {
             // Timeout in ms; allow redirects
@@ -966,22 +1075,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             ]);
             $content = @file_get_contents($url, false, $ctx);
         }
-        if (!is_string($content) || $content === '') {
-            $this->SendDebug('OpenMeteo', 'Empty response or HTTP error', 0);
-            return null;
-        }
-        $varId = $this->ReadPropertyBoolean('StoreWeatherData') ? @$this->GetIDForIdent('OpenMeteoRaw') : 0;
-        if ($varId > 0) {
-            @SetValueString($varId, $content);
-        }
-        $this->SendDebug('OpenMeteo', 'Response length: ' . strlen($content), 0);
-        $data = @json_decode($content, true);
-        $cache = is_array($data) ? $data : null;
-        $cacheUrl = $url;
-        if (!is_array($data)) {
-            $this->SendDebug('OpenMeteo', 'JSON decode failed', 0);
-        }
-        return $cache;
+        return is_string($content) ? $content : '';
     }
 
     private function resolveLocation(): array
@@ -1286,8 +1380,6 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
     }
 
     // Externe Helfer
-    private function httpGet(string $url): string { return ''; }
-
     private function httpGetBinary(string $url): string { return ''; }
 
     private function curlFetch(string $url, array $headers, bool $binary, bool $insecure): string { return ''; }
