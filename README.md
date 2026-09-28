@@ -68,5 +68,6 @@ Der benötigte WebHook (`/hook/wetterbilder/<InstanceID>`) wird automatisch regi
 ## Technische Details
 
 - **Uhrzeit-Synchronisation**: Die FlipClock wird clientseitig jede Sekunde anhand der Systemzeit (`new Date()`) aktualisiert, um Drift durch Browser-Tab-Throttling zu vermeiden.
-- **Wetter-Update**: Alle 60 Minuten per Timer (`UpdateTimer`).
-- **WebHook**: Bilder und FlipClock-Assets werden tokengesichert über `/hook/wetterbilder/<InstanceID>` ausgeliefert.
+- **Wetter-Update**: Alle 60 Minuten per Timer (`UpdateTimer`). Die letzte Antwort bleibt in der Instanz gespeichert: das Öffnen der Kachel und Temperatur-Updates rufen Open-Meteo nicht ab. Sind die Daten älter als 70 Minuten (etwa nach einem Neustart), holen die Kachel bzw. `ApplyChanges` den Abruf nach.
+- **WebHook**: Bilder, Wettersymbole und FlipClock-Assets werden tokengesichert über `/hook/wetterbilder/<InstanceID>` ausgeliefert. Die Adressen tragen eine Inhaltsversion; der Browser cacht sie dauerhaft und lädt nur Geändertes neu.
+- **Aktualisierungen**: Die Kachel bekommt ihren Stand beim Öffnen im Dokument; danach gehen nur noch echte Änderungen hinaus.

@@ -13,6 +13,8 @@ set_error_handler(static function (int $severity, string $message, string $file,
     throw new ErrorException($message, 0, $severity, $file, $line);
 });
 
+const VOR_UMBAU = '2d14d26'; // Stand vor Module Strict, Hook, Zwischenspeicher und Nachrichtenfilter
+
 $root = dirname(__DIR__);
 $moduleDir = $root . '/TileVisu-Weather-Clock-Tile';
 $source = (string) file_get_contents($moduleDir . '/module.php');
@@ -30,8 +32,8 @@ function tile_module(int $id = 12345, array $properties = []): TileVisuWeatherCl
     return $m;
 }
 
-// Nachrichten an offene Kacheln nur bei echter Aenderung: Zeilen [Bezeichnung, erwartete Nachrichten, gesendete].
-// Laeuft auch gegen den Stand vor diesen Aenderungen (Gegenprobe).
+// Nachrichten an offene Kacheln nur bei echter Aenderung. Zeilen [Bezeichnung, erwartet, gesendet, behoben]:
+// "behoben" markiert Verhalten, das diese Umstellung aendert - gegen den alten Stand muss genau das fallen.
 function nachrichtenfilter(): array
 {
     reset_world();
@@ -41,36 +43,156 @@ function nachrichtenfilter(): array
     $m = tile_module(27001, ['TemperatureVariableID' => 700]);
     $m->ApplyChanges();
     $rows = [];
-    $count = static function (string $label, int $expected, callable $action) use ($m, &$rows): void {
+    $count = static function (string $label, int $expected, bool $fixed, callable $action) use ($m, &$rows): void {
         $before = count($m->updates);
         $action();
-        $rows[] = [$label, $expected, count($m->updates) - $before];
+        $rows[] = [$label, $expected, count($m->updates) - $before, $fixed];
     };
     // $Data wie von Symcon: [neuer Wert, geaendert, alter Wert, Zeitstempel]
     $update = static fn (array $data): callable => static fn () => $m->MessageSink(0, 700, VM_UPDATE, $data);
-    $count('Update without a new value ($Data[1] false) sends nothing', 0, $update([21.5, false, 21.5, 1]));
+    $count('Update without a new value ($Data[1] false) sends nothing', 0, true, $update([21.5, false, 21.5, 1]));
     $GLOBALS['variables'][700] = ['value' => 22.0, 'formatted' => '22,0 °C'];
-    $count('Changed value sends its message', 1, $update([22.0, true, 21.5, 2]));
+    $count('Changed value sends its message', 1, false, $update([22.0, true, 21.5, 2]));
     // Neuer Wert, gleiche Anzeige: die Nachricht ist dieselbe
     $GLOBALS['variables'][700]['value'] = 22.04;
-    $count('Identical message is not sent again (memory per key)', 0, $update([22.04, true, 22.0, 3]));
+    $count('Identical message is not sent again (memory per key)', 0, true, $update([22.04, true, 22.0, 3]));
     // Die Bildnachricht traegt die Temperatur mit: nach deren Aenderung geht sie einmal hinaus
-    $count('Hourly timer after a temperature change sends the image message once', 1, static fn () => $m->UpdateNow());
-    $count('Hourly timer with unchanged weather sends nothing', 0, static fn () => $m->UpdateNow());
+    $count('Hourly timer after a temperature change sends the image message once', 1, true, static fn () => $m->UpdateNow());
+    $count('Hourly timer with unchanged weather sends nothing', 0, true, static fn () => $m->UpdateNow());
     $GLOBALS['weatherBody'] = weather_json(3, 1);
-    $count('Hourly timer with changed weather sends one message', 1, static fn () => $m->UpdateNow());
+    $count('Hourly timer with changed weather sends one message', 1, true, static fn () => $m->UpdateNow());
     $m->properties['CustomMediaID'] = 500;
-    $count('ApplyChanges sends the full state as one message', 1, static fn () => $m->ApplyChanges());
-    $count('Unchanged custom image (MM_UPDATE) sends nothing', 0, static fn () => $m->MessageSink(0, 500, MM_UPDATE, []));
+    $count('ApplyChanges sends the full state as one message', 1, true, static fn () => $m->ApplyChanges());
+    $count('Unchanged custom image (MM_UPDATE) sends nothing', 0, true, static fn () => $m->MessageSink(0, 500, MM_UPDATE, []));
     $GLOBALS['media'][500]['content'] = base64_encode("\xFF\xD8\xFF\xE0" . str_repeat('B', 40));
-    $count('Changed custom image sends one image message', 1, static fn () => $m->MessageSink(0, 500, MM_UPDATE, []));
-    $count('After ApplyChanges the same temperature message goes out again', 1, $update([22.04, true, 22.0, 4]));
-    $count('... but only once', 0, $update([22.04, true, 22.0, 5]));
+    $count('Changed custom image sends one image message', 1, false, static fn () => $m->MessageSink(0, 500, MM_UPDATE, []));
+    $count('After ApplyChanges the same temperature message goes out again', 1, false, $update([22.04, true, 22.0, 4]));
+    $count('... but only once', 0, true, $update([22.04, true, 22.0, 5]));
     $m->GetVisualizationTile();
-    $count('After the initial build of a tile it goes out again', 1, $update([22.04, true, 22.0, 6]));
+    $count('After the initial build of a tile it goes out again', 1, false, $update([22.04, true, 22.0, 6]));
     $m->GetVisualizationTile();
-    $count('Without $Data[1] (other format) the update is sent', 1, $update([]));
+    $count('Without $Data[1] (other format) the update is sent', 1, false, $update([]));
     return $rows;
+}
+
+// Frische Wetterdaten vorgeben; nur Fassungen mit Zwischenspeicher (das Attribut WeatherCache) kennen das
+function prime_cache(TileVisuWeatherClockTile $m): void
+{
+    if (array_key_exists('WeatherCache', $m->attributes)) {
+        $url = (new ReflectionMethod($m, 'weatherUrl'))->invoke($m);
+        $m->attributes['WeatherCache'] = json_encode(['url' => $url, 'at' => time(), 'data' => json_decode($GLOBALS['weatherBody'], true)]);
+    }
+}
+
+// Antworttext des Hooks, auch fuer Fassungen ohne SendHeader/SendStatus (Kopfzeilen gehen dort ins Leere)
+function hook_body(TileVisuWeatherClockTile $m, array $get): string
+{
+    if (method_exists($m, 'hook')) {
+        return $m->hook($get);
+    }
+    $_GET = $get;
+    ob_start();
+    (new ReflectionMethod($m, 'ProcessHookData'))->invoke($m);
+    return (string) ob_get_clean();
+}
+
+// Szenarien der Gegenprobe. Jedes laeuft gegen den alten Stand in einem eigenen Prozess: dessen static-Cache in
+// fetchOpenMeteo hielte sonst Daten ueber Aufrufe hinweg, die in Symcon je Aufruf neu beginnen.
+function szenarien(): array
+{
+    $setup = static function (int $id, array $properties = []): TileVisuWeatherClockTile {
+        reset_world();
+        $GLOBALS['weatherBody'] = weather_json(63, 1);
+        variable(700, 21.5, '21,5 °C');
+        // ApplyChanges ohne Wetteranzeige ruft in keiner Fassung ab; danach frische Daten und Wetter an
+        $m = tile_module($id, ['TemperatureVariableID' => 700, 'ShowWeather' => false] + $properties);
+        $m->ApplyChanges();
+        prime_cache($m);
+        $m->properties['ShowWeather'] = true;
+        $GLOBALS['fetches'] = [];
+        $m->updates = [];
+        $m->timerCalls = [];
+        return $m;
+    };
+    return [
+        'oeffnen' => static function () use ($setup): array {
+            $m = $setup(29001);
+            $m->RequestAction('GetState', 0);
+            return [['Opening the tile (GetState) with fresh data fetches nothing', 0, count($GLOBALS['fetches']), true],
+                ['... and sends nothing to the open tiles', 0, count($m->updates), true]];
+        },
+        'temperatur' => static function () use ($setup): array {
+            $m = $setup(29002);
+            $GLOBALS['variables'][700] = ['value' => 22.0, 'formatted' => '22,0 °C'];
+            $m->MessageSink(0, 700, VM_UPDATE, [22.0, true, 21.5, 1]);
+            return [['A temperature update fetches nothing', 0, count($GLOBALS['fetches']), true],
+                ['... and sends one temperature message', 1, count($m->updates), false]];
+        },
+        'filter' => static fn (): array => nachrichtenfilter(),
+        'timer' => static function () use ($setup): array {
+            $m = $setup(29003);
+            $m->ApplyChanges();
+            $restarts = count(array_filter($m->timerCalls, static fn (array $c): bool => $c[0] === 'SetTimerInterval'));
+            $m->timerCalls = [];
+            $m->UpdateNow();
+            $m->RequestAction('GetState', 0);
+            $m->MessageSink(0, 700, VM_UPDATE, [21.5, true, 21.0, 2]);
+            return [['ApplyChanges keeps the running hourly timer', 0, $restarts, true],
+                ['Fetch, open and update paths never set the timer', 0, count($m->timerCalls), false],
+                ['The hourly timer fetches', 1, count($GLOBALS['fetches']), false]];
+        },
+        'hook' => static function () use ($setup): array {
+            $m = $setup(29004);
+            $token = $m->attributes['WebhookToken'];
+            $file = (string) file_get_contents(dirname(MODULE_FILE) . '/assets/wetterbilder/fog-day.png');
+            // Beobachtbar in beiden Fassungen: kommt die Bilddatei heraus (der alte Stand setzt den Status direkt)
+            $delivers = static fn (array $get): int => hook_body($m, $get) === $file ? 1 : 0;
+            return [['Hook refuses a path in the image name', 0, $delivers(['name' => '../wetterbilder/fog-day', 'token' => $token]), true],
+                ['Hook delivers a background by name and token as before', 1, $delivers(['name' => 'fog-day', 'token' => $token]), false],
+                ['Hook refuses a wrong token', 0, $delivers(['name' => 'fog-day', 'token' => str_repeat('0', 32)]), false]];
+        },
+        'webhook' => static function (): array {
+            reset_world();
+            $GLOBALS['webhookInstances'] = [15000];
+            $m = tile_module(29005, ['ShowWeather' => false]);
+            $m->ApplyChanges();
+            $writes = array_filter($GLOBALS['webhookCalls'], static fn (array $c): bool => in_array($c[0], ['IPS_SetProperty', 'IPS_ApplyChanges'], true));
+            return [['ApplyChanges leaves the WebHook Control alone', 0, $writes === [] ? 0 : 1, true]];
+        },
+        'dokument' => static function () use ($setup): array {
+            $m = $setup(29006);
+            $m->UpdateNow();
+            $html = $m->GetVisualizationTile();
+            return [['Tile document carries the initial state (no round trip via all tiles)', 1, str_contains($html, '<script>handleMessage(') ? 1 : 0, true],
+                ['Messages carry no Base64 icons', 0, str_contains(implode('', $m->updates), 'base64,') ? 1 : 0, true]];
+        },
+        'altlast' => static function (): array {
+            reset_world();
+            $GLOBALS['objects'][501] = ['parent' => 29007, 'ident' => 'HookScript', 'name' => 'Wetterbilder WebHook',
+                'script' => "<?php\nif (isset(\$_IPS['SENDER']) && \$_IPS['SENDER'] === 'WebHook') {\n    \$iid = 29007;\n}\n"];
+            $m = tile_module(29007, ['ShowWeather' => false]);
+            $m->ApplyChanges();
+            return [['The orphaned hook script of this instance is removed', 0, isset($GLOBALS['objects'][501]) ? 1 : 0, true]];
+        },
+    ];
+}
+
+// Fuehrt ein Szenario mit einer anderen Fassung der Kachel in einem eigenen Prozess aus (ohne Netz): [Exitcode, Ausgabe]
+function unterprozess(string $moduleFile, string $name): array
+{
+    $command = 'WC_MODULE=' . escapeshellarg($moduleFile) . ' ' . php_without_network() . ' '
+        . escapeshellarg(__FILE__) . ' szenario ' . escapeshellarg($name) . ' 2>&1';
+    exec($command, $lines, $code);
+    return [$code, implode("\n", $lines)];
+}
+
+if (($argv[1] ?? '') === 'szenario') {
+    // Gegenprobe: ein Szenario, Ausgaben des Moduls (Hook) verworfen, Ergebnis als JSON
+    ob_start();
+    $rows = szenarien()[$argv[2]]();
+    ob_end_clean();
+    echo json_encode($rows, JSON_THROW_ON_ERROR);
+    exit(0);
 }
 
 echo '--- Module Strict' . PHP_EOL;
@@ -461,5 +583,76 @@ $tm->MessageSink(0, 500, MM_UPDATE, []);
 tile($tm);
 $tm->hook(['token' => $tm->attributes['WebhookToken']]);
 check($tm->timerCalls === [] && count($fetches) >= 2, 'Fetching, opening, updates and the hook never set the timer');
+
+echo '--- Kachel-JavaScript' . PHP_EOL;
+$html = (string) file_get_contents($moduleDir . '/module.html');
+check(!preg_match('~searchParams|webhookToken|withTs|assetBase~', $html), 'The tile builds no addresses and reads no token from a URL');
+$outside = (string) preg_replace('~<!-- symcon-icons-shared:.*?<!-- /symcon-icons-shared -->~s', '', $html);
+check(substr_count($html, '<!-- symcon-icons-shared:') === 1 && !str_contains($outside, '/icons.js'), 'Shared icon block instead of an own icons.js tag');
+exec('command -v node 2>/dev/null', $unused, $nodeCode);
+if ($nodeCode !== 0) {
+    echo 'SKIP: node not available, no syntax check of the tile scripts' . PHP_EOL;
+} else {
+    reset_world();
+    $weatherBody = weather_json(63, 1);
+    $documents = ['module.html' => $html, 'tile document' => tile(tile_module(30001))['html']];
+    $hookAvailable = false;
+    $documents['tile document without hook'] = tile(tile_module(30002))['html'];
+    $hookAvailable = true;
+    foreach ($documents as $name => $document) {
+        preg_match_all('~<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>~s', $document, $scripts);
+        foreach ($scripts[1] as $i => $js) {
+            $file = sys_get_temp_dir() . '/wc-js-' . bin2hex(random_bytes(6)) . '.js';
+            file_put_contents($file, $js);
+            exec('node --check ' . escapeshellarg($file) . ' 2>&1', $out, $code);
+            unlink($file);
+            check($code === 0, 'Script ' . $i . ' of the ' . $name . ' passes node --check (' . strlen($js) . ' characters)');
+        }
+    }
+}
+
+echo '--- Gegenprobe gegen ' . VOR_UMBAU . PHP_EOL;
+$neu = [];
+foreach (szenarien() as $name => $szenario) {
+    foreach ($szenario() as [$label, $expected, $actual, $fixed]) {
+        check($actual === $expected, $label);
+        $neu[$label] = $fixed;
+    }
+}
+$repo = escapeshellarg($root);
+exec('git -C ' . $repo . ' cat-file -e ' . escapeshellarg(VOR_UMBAU . '^{commit}') . ' 2>/dev/null', $unused, $gitCode);
+if ($gitCode !== 0) {
+    echo 'SKIP: ' . VOR_UMBAU . ' not available, no counter-check' . PHP_EOL;
+} else {
+    // module.php und module.html des alten Stands in ein Temp-Verzeichnis, assets/ als Verweis auf diese Arbeitskopie
+    $dir = sys_get_temp_dir() . '/wc-test-' . bin2hex(random_bytes(6));
+    mkdir($dir . '/TileVisu-Weather-Clock-Tile', 0700, true);
+    foreach (['module.php', 'module.html'] as $datei) {
+        file_put_contents($dir . '/TileVisu-Weather-Clock-Tile/' . $datei,
+            (string) shell_exec('git -C ' . $repo . ' show ' . escapeshellarg(VOR_UMBAU . ':TileVisu-Weather-Clock-Tile/' . $datei)));
+    }
+    symlink($moduleDir . '/assets', $dir . '/TileVisu-Weather-Clock-Tile/assets');
+    $alt = [];
+    foreach (array_keys(szenarien()) as $name) {
+        [$code, $json] = unterprozess($dir . '/TileVisu-Weather-Clock-Tile/module.php', $name);
+        check($code === 0, 'Scenario "' . $name . '" runs against ' . VOR_UMBAU . ($code === 0 ? '' : ': ' . substr($json, 0, 300)));
+        foreach (json_decode($json, true, 512, JSON_THROW_ON_ERROR) as [$label, $expected, $actual]) {
+            $alt[$label] = $actual !== $expected;
+        }
+    }
+    unlink($dir . '/TileVisu-Weather-Clock-Tile/assets');
+    foreach (['module.php', 'module.html'] as $datei) {
+        unlink($dir . '/TileVisu-Weather-Clock-Tile/' . $datei);
+    }
+    rmdir($dir . '/TileVisu-Weather-Clock-Tile');
+    rmdir($dir);
+    foreach ($neu as $label => $fixed) {
+        echo '  ' . ($alt[$label] ?? null ? 'faellt ' : 'haelt  ') . ($fixed ? '[behoben]  ' : '[erhalten] ') . $label . PHP_EOL;
+    }
+    $fallend = array_keys(array_filter($alt));
+    $behoben = array_keys(array_filter($neu));
+    check(array_keys($alt) === array_keys($neu) && $fallend === $behoben,
+        'Counter-check: against ' . VOR_UMBAU . ' exactly the ' . count($behoben) . ' fixed checks fail, the ' . (count($neu) - count($behoben)) . ' preserved ones hold');
+}
 
 echo 'OK' . PHP_EOL;
