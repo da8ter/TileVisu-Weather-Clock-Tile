@@ -614,6 +614,8 @@ check(($locale['translations']['de']['Filled icons'] ?? '') === 'Gefüllte Symbo
 echo '--- Kachel-JavaScript' . PHP_EOL;
 $html = (string) file_get_contents($moduleDir . '/module.html');
 check(!preg_match('~searchParams|webhookToken|withTs|assetBase~', $html), 'The tile builds no addresses and reads no token from a URL');
+check((bool) preg_match('~new window\.FlipClock\(el, new Date\(\), \{[^}]*autoStart: false~', $html),
+    'FlipClock runs without its own timer (autoStart: false): the tile sets the time itself, no 60 fps loop');
 $outside = (string) preg_replace('~<!-- symcon-icons-shared:.*?<!-- /symcon-icons-shared -->~s', '', $html);
 check(substr_count($html, '<!-- symcon-icons-shared:') === 1 && !str_contains($outside, '/icons.js'), 'Shared icon block instead of an own icons.js tag');
 exec('command -v node 2>/dev/null', $unused, $nodeCode);

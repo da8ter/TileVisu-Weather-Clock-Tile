@@ -661,9 +661,12 @@
       try {
         // Instantiate new FlipClock with a 24h clock face and no seconds
         // In v0.10.8, pass the face as a string key ("TwentyFourHourClock")
+        // autoStart: false - der eigene Timer von FlipClock prueft die Zeit per requestAnimationFrame
+        // 60-mal je Sekunde (gemessen ~0,4 CPU-Kerne im Leerlauf); die Uhr stellt syncClock unten selbst.
         flipClock = new window.FlipClock(el, new Date(), {
           face: 'TwentyFourHourClock',
-          showSeconds: !!showSeconds
+          showSeconds: !!showSeconds,
+          autoStart: false
         });
         // Drive clock ourselves to avoid relying on internal timer
         updateDate();
