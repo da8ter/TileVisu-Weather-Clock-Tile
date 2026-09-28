@@ -680,69 +680,6 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         return $file === null ? '' : $this->fileSource('name', $name, $file[0], $file[1]);
     }
 
-    private function mapIconToG5(int|string $iconCode, ?string $dayOrNight = null): string
-    {
-        $code = (int)$iconCode;
-        $dn   = (strtoupper((string)$dayOrNight) === 'N') ? 'night' : 'day';
-
-        // 1) Codes mit festem, von TWC vorgegebenem Tag/Nacht-Status
-        $exact = [
-            29 => 'partly-cloudy-night',
-            30 => 'sunny-intervals-day',
-            31 => 'clear-sky-night',
-            32 => 'sunny-day',
-            33 => 'white-cloud-night',
-            34 => 'white-cloud-day',
-            39 => 'light-rain-shower-day',
-            45 => 'light-rain-shower-night',
-            41 => 'light-snow-shower-day',
-            46 => 'light-snow-shower-night',
-            38 => 'thunderstorm-shower-day',
-            47 => 'thunderstorm-shower-night',
-        ];
-        if (isset($exact[$code])) return $exact[$code];
-
-        // 2) Neutrale Codes -> Basis + -day/-night anhängen
-        $byDn = [
-            11 => 'light-rain-shower',
-            12 => 'light-rain',
-            40 => 'heavy-rain',
-            9  => 'drizzle',
-            8  => 'drizzle',
-            10 => 'sleet',
-            6  => 'sleet',
-            7  => 'sleet',
-            18 => 'sleet',
-            17 => 'hail',
-            35 => 'hail-shower',
-            13 => 'light-snow',
-            14 => 'light-snow-shower',
-            15 => 'heavy-snow',
-            16 => 'light-snow',
-            42 => 'heavy-snow',
-            43 => 'heavy-snow',
-            3  => 'thunderstorm',
-            4  => 'thunderstorm',
-            20 => 'fog',
-            21 => 'hazy',
-            22 => 'hazy',
-            26 => 'thick-cloud',
-            27 => 'thick-cloud',
-            28 => 'thick-cloud',
-            23 => 'white-cloud',
-            24 => 'white-cloud',
-            19 => 'sandstorm',
-            1  => 'tropicalstorm',
-            2  => 'tropicalstorm',
-            0  => 'thunderstorm',
-            44 => 'hazy'
-        ];
-        if (isset($byDn[$code])) return $byDn[$code] . '-' . $dn;
-
-        // Letzter Fallback
-        return 'hazy-' . $dn;
-    }
-
     public function MessageSink(int $TimeStamp, int $SenderID, int $Message, array $Data): void
     {
         if ($Message === IPS_KERNELSTARTED) {
@@ -1132,56 +1069,6 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         return 'hazy-' . $dn;
     }
 
-    private function mapWMOToFA(int $code, bool $isDay): string
-    {
-        // Minimal FA mapping for forecast icons
-        $base = 'cloud';
-        switch ($code) {
-            case 0:
-            case 1:
-                $base = $isDay ? 'sun' : 'moon';
-                break;
-            case 2:
-                $base = $isDay ? 'cloud-sun' : 'cloud-moon';
-                break;
-            case 3:
-                $base = 'clouds';
-                break;
-            case 45:
-            case 48:
-                $base = 'smog'; // fog
-                break;
-            case 51: case 53: case 55:
-                $base = 'cloud-drizzle';
-                break;
-            case 61: case 63:
-                $base = 'cloud-rain';
-                break;
-            case 65:
-                $base = 'cloud-showers-heavy';
-                break;
-            case 66: case 67:
-                $base = 'cloud-sleet';
-                break;
-            case 71: case 73: case 75: case 77:
-                $base = 'snowflake';
-                break;
-            case 80: case 81:
-                $base = 'cloud-sun-rain';
-                break;
-            case 82:
-                $base = 'cloud-showers-heavy';
-                break;
-            case 85: case 86:
-                $base = 'cloud-snow';
-                break;
-            case 95: case 96: case 99:
-                $base = 'cloud-bolt';
-                break;
-        }
-        return 'fa-light fa-' . $base;
-    }
-
     private function germanDayNameFromDate(string $date): string
     {
         // $date format: YYYY-MM-DD
@@ -1326,26 +1213,5 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
 
     
 
-    private function getIconHelper(): \TileVisu\Lib\IconHelper
-    {
-        static $helper = null;
-        if ($helper === null) {
-            require_once __DIR__ . '/libs/IconHelper.php';
-            $helper = new \TileVisu\Lib\IconHelper();
-        }
-        return $helper;
-    }
-
-    // Externe Helfer
-    private function httpGetBinary(string $url): string { return ''; }
-
-    private function curlFetch(string $url, array $headers, bool $binary, bool $insecure): string { return ''; }
-
-    private function buildReferer(string $url): string { return ''; }
-
-    private function tryAlternatePageUrls(string $url): string { return ''; }
-
-    private function rebuildUrlWithHost(array $parts, string $newHost): string { return ''; }
 }
 
-// PHP Stub-Funktionen (leer)
