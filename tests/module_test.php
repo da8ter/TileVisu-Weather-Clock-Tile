@@ -605,6 +605,12 @@ echo '--- Abruf ohne unsicheren SSL-Rueckfall' . PHP_EOL;
 $quelle = (string) file_get_contents($moduleDir . '/module.php');
 check(!preg_match("~'verify_peer'\\s*=>\\s*false|CURLOPT_SSL_VERIFYPEER\\s*=>\\s*false~", $quelle), 'No request without certificate check');
 
+echo '--- Beschriftung der Symbol-Option' . PHP_EOL;
+$form = (string) file_get_contents($moduleDir . '/form.json');
+$locale = json_decode((string) file_get_contents($moduleDir . '/locale.json'), true);
+check(str_contains($form, '"name": "UseOutlineIcons",' . "\n" . '      "caption": "Filled icons"'), 'The checkbox says what a tick does: filled icons');
+check(($locale['translations']['de']['Filled icons'] ?? '') === 'Gefüllte Symbole (statt Linien)', 'German caption for the icon option');
+
 echo '--- Kachel-JavaScript' . PHP_EOL;
 $html = (string) file_get_contents($moduleDir . '/module.html');
 check(!preg_match('~searchParams|webhookToken|withTs|assetBase~', $html), 'The tile builds no addresses and reads no token from a URL');

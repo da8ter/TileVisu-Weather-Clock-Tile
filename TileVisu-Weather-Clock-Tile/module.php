@@ -1230,7 +1230,7 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
     private function iconFile(int $code, bool $isDay): ?string
     {
         $variant = $this->ReadPropertyBoolean('UseAnimatedIcons') ? 'animated' : 'static';
-        // Bisherige Zuordnung: UseOutlineIcons waehlt den Ordner "full"
+        // Angehakt = gefuellte Symbole (Ordner "full"), so im Formular beschriftet; der Name der Eigenschaft ist historisch
         $style = $this->ReadPropertyBoolean('UseOutlineIcons') ? 'full' : 'outline';
         $dirs = [$style . '/' . $variant, $variant];
         $find = static function (string $dir, array $names): ?string {

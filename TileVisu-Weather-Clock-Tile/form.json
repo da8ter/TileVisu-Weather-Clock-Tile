@@ -38,7 +38,7 @@
     {
       "type": "CheckBox",
       "name": "UseOutlineIcons",
-      "caption": "outline/full"
+      "caption": "Filled icons"
     },
     {
       "type": "CheckBox",
