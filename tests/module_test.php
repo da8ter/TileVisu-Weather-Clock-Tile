@@ -601,6 +601,10 @@ check($fehlend === [], 'Every WMO code has its own existing background, none fal
 check($bild(53, true) === 'moderate-drizzle-day' && $bild(55, false) === 'dense-drizzle-night', 'Drizzle 53 is moderate, 55 dense (52 does not exist)');
 check($bild(61, true) === 'light-rain-shower-day' && $bild(73, false) === 'heavy-snow-shower-night', 'Codes 61 and 73 carry the hyphen before day/night');
 
+echo '--- Abruf ohne unsicheren SSL-Rueckfall' . PHP_EOL;
+$quelle = (string) file_get_contents($moduleDir . '/module.php');
+check(!preg_match("~'verify_peer'\\s*=>\\s*false|CURLOPT_SSL_VERIFYPEER\\s*=>\\s*false~", $quelle), 'No request without certificate check');
+
 echo '--- Kachel-JavaScript' . PHP_EOL;
 $html = (string) file_get_contents($moduleDir . '/module.html');
 check(!preg_match('~searchParams|webhookToken|withTs|assetBase~', $html), 'The tile builds no addresses and reads no token from a URL');

@@ -1063,23 +1063,6 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
             ]);
             $content = @file_get_contents($url, false, $ctx);
         }
-        if (!is_string($content) || $content === '') {
-            // Last resort: insecure (not recommended). Attempt only if everything else failed.
-            $this->SendDebug('OpenMeteo', 'Retry insecure SSL fallback', 0);
-            $ctx = stream_context_create([
-                'http' => [
-                    'method' => 'GET',
-                    'timeout' => 15,
-                    'ignore_errors' => true,
-                    'header' => "Accept: application/json\r\nUser-Agent: TileVisuWeatherClockTile/1.0"
-                ],
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false
-                ]
-            ]);
-            $content = @file_get_contents($url, false, $ctx);
-        }
         return is_string($content) ? $content : '';
     }
 
