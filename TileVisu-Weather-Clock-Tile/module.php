@@ -1128,15 +1128,15 @@ class TileVisuWeatherClockTile extends IPSModuleStrict
         if (in_array($code, [3], true)) return 'thick-cloud-' . $dn;
         if (in_array($code, [45,48], true)) return 'fog-' . $dn; // or mist-
         if ($code === 51) return 'light-drizzle-' . $dn;
-        if ($code === 52) return 'moderate-drizzle-' . $dn;
-        if ($code === 53) return 'dense-drizzle-' . $dn;
+        if ($code === 53) return 'moderate-drizzle-' . $dn;
+        if ($code === 55) return 'dense-drizzle-' . $dn;
         if (in_array($code, [56,57], true)) return 'sleet-' . $dn; // freezing drizzle
-        if ($code === 61) return 'light-rain-shower' . $dn;
+        if ($code === 61) return 'light-rain-shower-' . $dn;
         if ($code === 63) return 'light-rain-' . $dn;
         if ($code === 65) return 'heavy-rain-' . $dn;
         if (in_array($code, [66,67], true)) return 'sleet-' . $dn; // freezing rain
         if ($code === 71) return 'light-snow-shower-' . $dn;
-        if ($code === 73) return 'heavy-snow-shower' . $dn;
+        if ($code === 73) return 'heavy-snow-shower-' . $dn;
         if ($code === 75) return 'heavy-snow-' . $dn;
         if ($code === 77) return 'light-snow-shower-' . $dn; // snow grains
         if ($code === 80) return 'light-rain-shower-' . $dn;

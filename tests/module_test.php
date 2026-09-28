@@ -584,6 +584,23 @@ tile($tm);
 $tm->hook(['token' => $tm->attributes['WebhookToken']]);
 check($tm->timerCalls === [] && count($fetches) >= 2, 'Fetching, opening, updates and the hook never set the timer');
 
+echo '--- Wetterbilder je WMO-Code' . PHP_EOL;
+reset_world();
+$m = tile_module(30010);
+$bild = static fn (int $code, bool $tag): string => (string) (new ReflectionMethod($m, 'mapWMOToBackgroundName'))->invoke($m, $code, $tag);
+$fehlend = [];
+foreach ([0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99] as $code) {
+    foreach ([true, false] as $tag) {
+        $name = $bild($code, $tag);
+        if (str_starts_with($name, 'hazy-') || (!is_file($moduleDir . '/assets/wetterbilder/' . $name . '.png') && !is_file($moduleDir . '/assets/wetterbilder/' . $name . '.webp'))) {
+            $fehlend[] = $code . ($tag ? 'T' : 'N') . '=' . $name;
+        }
+    }
+}
+check($fehlend === [], 'Every WMO code has its own existing background, none falls back to hazy' . ($fehlend === [] ? '' : ': ' . implode(', ', $fehlend)));
+check($bild(53, true) === 'moderate-drizzle-day' && $bild(55, false) === 'dense-drizzle-night', 'Drizzle 53 is moderate, 55 dense (52 does not exist)');
+check($bild(61, true) === 'light-rain-shower-day' && $bild(73, false) === 'heavy-snow-shower-night', 'Codes 61 and 73 carry the hyphen before day/night');
+
 echo '--- Kachel-JavaScript' . PHP_EOL;
 $html = (string) file_get_contents($moduleDir . '/module.html');
 check(!preg_match('~searchParams|webhookToken|withTs|assetBase~', $html), 'The tile builds no addresses and reads no token from a URL');
