@@ -2,7 +2,7 @@
 
 Symcon-Kachel (HTML-SDK) mit FlipClock, Datum, aktuellem Wetter samt Hintergrundbild und 3-Tage-Vorhersage von Open-Meteo. Öffentliches Repo `da8ter/TileVisu-Weather-Clock-Tile`. Bedienung: `README.md`.
 
-Projektwissen (Entscheidungen, Messwerte): **`docs/README.md`**. Betriebsdaten dieses Rechners (Zweige, Testsystem, Werkzeuge außerhalb des Repos) stehen in `CLAUDE.local.md` (nicht eingecheckt).
+Projektwissen (Entscheidungen, Messwerte): **`.claude/docs/README.md`**. Betriebsdaten dieses Rechners (Zweige, Testsystem, Werkzeuge außerhalb des Repos) stehen in `CLAUDE.local.md` (nicht eingecheckt).
 
 ## Aufbau
 
@@ -34,4 +34,4 @@ Umfang und die Handprobe nach dem Neuladen in einer Symcon-Testinstanz: `tests/R
 
 ## Wissen
 
-Gemeinsames Symcon-Plattformwissen (Hooks und Ausgabegrenze, Timer, Kacheln, Icons): https://github.com/da8ter/SymDo-Family-Organizer/tree/SymDo-Beta/docs/plattform – lokal `../List/docs/plattform/`. Symcon-Fragen am offiziellen Handbuch prüfen.
+Gemeinsames Symcon-Plattformwissen (Hooks und Ausgabegrenze, Timer, Kacheln, Icons): https://github.com/da8ter/SymDo-Family-Organizer/tree/SymDo-Beta/.claude/docs/plattform – lokal `../List/.claude/docs/plattform/`. Symcon-Fragen am offiziellen Handbuch prüfen.
